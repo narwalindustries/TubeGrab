@@ -56,18 +56,22 @@ Ensure you have the following installed:
    npm install
    ```
 
-3. **Start the application:**
+3. **Launch as Desktop App (Native Window):**
+   - Simply double-click **`TubeGrab.vbs`** (silent launch) or **`TubeGrab.bat`**.
+   - Or run via terminal:
+     ```bash
+     npm run desktop
+     ```
+
+4. **Or Run as Web Server:**
    ```bash
    npm start
    ```
-   Or using the automated python launcher with self-updating dependencies:
+   Navigate to `http://localhost:3000` in your browser.
+
+   Or use the automated Python launcher with self-updating dependencies:
    ```bash
    python run.py
-   ```
-
-4. Open your browser and navigate to:
-   ```
-   http://localhost:3000
    ```
 
 ### Docker Support

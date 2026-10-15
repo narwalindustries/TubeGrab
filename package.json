@@ -2,13 +2,18 @@
   "name": "tubegrab",
   "version": "1.0.0",
   "description": "YouTube-style web tool with per-video download options (video + audio) powered by yt-dlp",
-  "main": "server.js",
+  "main": "main.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "app": "electron .",
+    "desktop": "electron ."
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",
     "express": "^4.19.2",
     "youtubei.js": "^18.1.0"
+  },
+  "devDependencies": {
+    "electron": "^44.7.2"
   }
 }
