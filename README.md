@@ -1,3 +1,13 @@
+---
+title: TubeGrab
+emoji: 🚀
+colorFrom: red
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # TubeGrab 🚀 - The Ultimate YouTube Video & Audio Downloader
 
 **TubeGrab** is a powerful, fast, and completely free web application that allows you to download any YouTube video or audio instantly. Designed with simplicity in mind, it features a native, YouTube-like interface where you can search, watch, play, and download content seamlessly.
