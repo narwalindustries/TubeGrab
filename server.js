@@ -209,6 +209,7 @@ const ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/health', (req, res) => res.status(200).send('OK'));
 
 const baseArgs = (noPlaylist = true) => {
   const a = ['--no-warnings', '--js-runtimes', 'node'];
