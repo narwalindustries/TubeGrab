@@ -317,6 +317,7 @@ main{flex:1;padding:24px}
   color:#f0f0f0;
   display:-webkit-box;
   -webkit-line-clamp:1;
+  line-clamp:1;
   -webkit-box-orient:vertical;
   overflow:hidden;
 }
