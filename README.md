@@ -1,8 +1,17 @@
 # TubeGrab 🚀 - The Ultimate YouTube Video & Audio Downloader
 
-**TubeGrab** is a powerful, fast, and completely free web application that allows you to download any YouTube video or audio instantly. Designed with simplicity in mind, it features a native, YouTube-like interface where you can search, watch, play, and download content seamlessly.
+**TubeGrab** is a powerful, fast, and completely free application that allows you to download any YouTube video or audio instantly. Designed with simplicity in mind, it features a native, YouTube-like interface where you can search, watch, play, and download content seamlessly.
 
 ---
+
+## 📥 Downloads & Quick Launch
+
+[![Windows Desktop App](https://img.shields.io/badge/Windows-Download%20Desktop%20App-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/narwalindustries/TubeGrab/archive/refs/heads/main.zip)
+[![GitHub Releases](https://img.shields.io/badge/Releases-Latest%20Version-238636?style=for-the-badge&logo=github&logoColor=white)](https://github.com/narwalindustries/TubeGrab/releases)
+
+* 🪟 **Windows Desktop**: Click the blue button above to download, unzip, and double-click **`TubeGrab.vbs`** for an instant, silent desktop launch.
+* 📱 **Android Usage**: A standalone offline Android APK is not feasible without a backend cloud server (as phones lack native Node.js, Python, and FFmpeg environments). However, you can seamlessly open TubeGrab on your Android phone's browser by connecting to your PC's Wi-Fi IP (e.g., `http://192.168.x.x:3000`).
+
 
 ## ✨ Key Features
 
