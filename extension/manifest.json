@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "TubeGrab Buttons",
+  "version": "1.0",
+  "description": "Adds a Download button on youtube.com that opens your TubeGrab server.",
+  "content_scripts": [{ "matches": ["https://www.youtube.com/*"], "js": ["content.js"], "css": ["content.css"] }]
+}

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="description" content="TubeGrab is the best free YouTube video and audio downloader. Watch, play, and download YouTube videos in all qualities without any login. Fast, simple, and up-to-date.">
+<meta name="keywords" content="TubeGrab, YouTube downloader, download YouTube videos, YouTube to MP3, YouTube to MP4, free video downloader, no login YouTube downloader, watch and download YouTube">
+<title>TubeGrab - Free YouTube Video & Audio Downloader</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <a class="logo" href="/"><svg viewBox="0 0 28 20" width="32" height="22"><rect width="28" height="20" rx="5" fill="#f00"/><path d="M11 5.5v9l8-4.5z" fill="#fff"/></svg><span>TubeGrab</span></a>
+  <form id="searchForm" role="search">
+    <input id="q" placeholder="Search" aria-label="Search videos" autocomplete="off">
+    <button type="submit" aria-label="Search" title="Search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>
+    </button>
+  </form>
+  <button id="downloadsButton" type="button" aria-label="Open downloads" title="Downloads">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>
+    <span>Downloads</span>
+  </button>
+</header>
+<main>
+  <div class="feed-heading">
+    <h1>Videos</h1>
+    <div id="pullRefresh" aria-live="polite" aria-label="Pull to refresh">Pull to refresh</div>
+  </div>
+  <div id="status" role="status" aria-live="polite"></div>
+  <section id="grid"></section>
+  <div id="loadMore" aria-hidden="true"></div>
+</main>
+<footer class="app-footer">
+  <p>© 2026 <strong>Narwal Software Solutions</strong>. All rights reserved.</p>
+</footer>
+
+<div class="overlay" id="downloadsModal" hidden>
+  <section class="downloads-screen" role="dialog" aria-modal="true" aria-labelledby="downloadsHeading">
+    <div class="downloads-header">
+      <div><h2 id="downloadsHeading">Downloads</h2><p>Your downloads continue in the background.</p></div>
+      <div class="downloads-header-actions">
+        <button id="clearDownloadsBtn" class="clear-history-btn" type="button" title="Clear download history">Clear history</button>
+        <button class="close" type="button" data-close aria-label="Close downloads">✕</button>
+      </div>
+    </div>
+    <div id="downloadsList" aria-live="polite"><p>Loading downloads…</p></div>
+  </section>
+</div>
+
+<div class="overlay" id="playerModal" hidden>
+  <div class="watch-screen" role="dialog" aria-modal="true" aria-label="TubeGrab video player">
+    <div class="watch-header">
+      <button class="back-button" type="button" data-close aria-label="Back to videos"><span aria-hidden="true">←</span> Back</button>
+      <div class="watch-title">
+        <a class="logo" href="/" aria-label="TubeGrab home"><svg viewBox="0 0 28 20" width="32" height="22"><rect width="28" height="20" rx="5" fill="#f00"/><path d="M11 5.5v9l8-4.5z" fill="#fff"/></svg><span>TubeGrab</span></a>
+        <h1 id="pTitle"></h1>
+      </div>
+      <div class="watch-header-actions">
+        <button id="pDownloadsButton" class="watch-downloads-btn" type="button" aria-label="Open downloads" title="Downloads">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>
+        </button>
+        <div id="ramStatusBadge" class="ram-badge" title="High-Speed RAM Stream Cache">⚡ RAM: Loading…</div>
+      </div>
+    </div>
+    <div class="watch-content">
+      <div class="player" id="playerContainer">
+        <video id="playerVideo" playsinline preload="auto"></video>
+        <button id="unmuteOverlay" class="unmute-overlay" type="button" hidden>🔇 Tap to unmute</button>
+        <div id="playerError" class="player-error" hidden></div>
+        <div id="bufferingIndicator" class="buffering-indicator" role="status" aria-live="polite" hidden>
+          <span class="buffer-spinner" aria-hidden="true"></span>
+          <span id="bufferStatusText">Buffering to RAM…</span>
+        </div>
+        <div class="player-controls">
+          <div class="player-control-row">
+            <div class="control-group">
+              <button id="togglePlayback" type="button" aria-label="Play" title="Play" disabled>▶</button>
+              <button id="prevVideo" type="button" aria-label="Previous video" title="Previous video" disabled>⏮</button>
+              <button id="nextVideo" type="button" aria-label="Next video" title="Next video" disabled>⏭</button>
+              <button id="muteToggle" type="button" aria-label="Mute" title="Mute">🔊</button>
+              <input id="volumeBar" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+              <span class="video-time"><span id="currentTime">0:00</span> / <span id="totalTime">0:00</span></span>
+            </div>
+            <span class="control-spacer"></span>
+            <div class="control-group">
+              <div class="settings-wrap">
+                <button id="settingsButton" type="button" aria-label="Playback settings" title="Playback settings" aria-expanded="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9m4 0h3M4 17h3m4 0h9M13 4v6M9 14v6"></path><circle cx="15" cy="7" r="2"></circle><circle cx="9" cy="17" r="2"></circle></svg>
+                  <span id="currentSpeed">1×</span>
+                </button>
+                <div id="settingsMenu" class="player-settings" hidden>
+                  <div class="settings-section">
+                    <div class="settings-heading"><span>Video quality</span><span id="settingsQualityValue">Auto</span></div>
+                    <div class="quality-options" id="qualityOptions">
+                      <button type="button" data-quality="auto" aria-pressed="true" class="selected">Auto</button>
+                    </div>
+                  </div>
+                  <div class="settings-section">
+                  <div class="settings-heading"><span>Playback speed</span><span id="settingsSpeedValue">Normal</span></div>
+                  <div class="speed-options">
+                    <button type="button" data-speed="0.5" aria-pressed="false">0.5×</button>
+                    <button type="button" data-speed="0.75" aria-pressed="false">0.75×</button>
+                    <button type="button" data-speed="1" aria-pressed="true" class="selected">Normal</button>
+                    <button type="button" data-speed="1.25" aria-pressed="false">1.25×</button>
+                    <button type="button" data-speed="1.5" aria-pressed="false">1.5×</button>
+                    <button type="button" data-speed="2" aria-pressed="false">2×</button>
+                  </div>
+                  </div>
+                </div>
+              </div>
+              <button id="fullscreenButton" type="button" aria-label="Enter fullscreen" title="Enter fullscreen"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m13-5h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m13-5v3a2 2 0 0 1-2 2h-3"></path></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pbar"><button class="dl" id="pDl" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 17v3h16v-3"></path></svg><span>Download</span></button></div>
+      <section class="related-section" aria-labelledby="relatedHeading">
+        <h2 id="relatedHeading">Up next</h2>
+        <div id="relatedVideos" class="related-videos"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="dlModal" hidden>
+  <div class="modal">
+    <button class="close" data-close>✕</button>
+    <h2 id="dTitle">Download</h2>
+    <div id="dBody"></div>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
