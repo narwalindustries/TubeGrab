@@ -211,36 +211,63 @@ async function getInnertubeInfo(id) {
     playbackQualities,
   };
 }
-const HOME_SEARCHES = [
-  ...(DEFAULT_QUERY ? [DEFAULT_QUERY] : []),
-  'official music video new song',
-  'official music video pop single',
-  'official music video Hindi song',
-  'official music video Punjabi song',
-  'official music video K-pop song',
-  'official music video Latin pop song',
-  'official music video rock single',
-  'official music video R&B song',
-  'official music video 2025 single',
-  'official music video 2026 single',
-  'Taylor Swift official music video',
-  'The Weeknd official music video',
-  'Dua Lipa official music video',
-  'Billie Eilish official music video',
-  'Ed Sheeran official music video',
-  'Sabrina Carpenter official music video',
-  'Ariana Grande official music video',
-  'Bruno Mars official music video',
-  'BTS official music video',
-  'BLACKPINK official music video',
-  'Bad Bunny official music video',
-  'Shakira official music video',
-  'Arijit Singh official music video',
-  'Diljit Dosanjh official music video',
-  'AP Dhillon official music video',
-  'Shreya Ghoshal official music video',
-  'A R Rahman official music video',
+const VAST_HOME_CATEGORIES = [
+  // 1. Trending Hindi & Bollywood Hits
+  ['trending hindi songs official video', 'bollywood hit songs 2026', 'arijit singh new song official', 'shreya ghoshal songs'],
+  // 2. Trending Punjabi & Regional Hits
+  ['latest punjabi songs official video', 'diljit dosanjh official song', 'karan aujla music video', 'ap dhillon tracks', 'sidhu moosewala official'],
+  // 3. Global Pop & Billboard Hot 100
+  ['billboard hot 100 official music video', 'the weeknd official video', 'taylor swift bruno mars songs', 'dua lipa billie eilish video'],
+  // 4. Technology & Science
+  ['latest tech smartphone review', 'futuristic tech innovations mkbhd', 'veritasium science discovery'],
+  // 5. Gaming & Esports
+  ['gaming highlights viral moments', 'minecraft gta epic clips', 'top esports moments 2026'],
+  // 6. Viral Entertainment & Comedy
+  ['stand up comedy viral video', 'trending entertainment clips', 'viral funny moments youtube'],
+  // 7. Movie Trailers & Blockbuster Teasers
+  ['official movie trailer 2026', 'new blockbuster trailer teaser official']
 ];
+
+function isSongEntry(e) {
+  const title = (e.title || '').toLowerCase();
+  const channel = (e.channel || e.uploader || '').toLowerCase();
+  const dur = Number(e.duration) || 0;
+
+  const hasSongKeywords = /\b(official\s*(music\s*)?video|audio|song|music|track|lyrics|lyric\s*video|single|remix|acoustic|feat|ft\.)\b/i.test(title);
+  const hasMusicChannel = /\b(records?|music|vevo|t-series|zee\s*music|sony\s*music|yrf|speed\s*records|white\s*hill|geet\s*mp3|tips|saregama)\b/i.test(channel);
+  const isReasonableSongLength = dur >= 60 && dur <= 660; // 1 to 11 minutes
+
+  return (hasSongKeywords || hasMusicChannel) && isReasonableSongLength;
+}
+
+function rankSearchResults(rawEntries) {
+  const songs = [];
+  const others = [];
+
+  for (const e of rawEntries) {
+    if (isSongEntry(e)) songs.push(e);
+    else others.push(e);
+  }
+
+  // Top 10 slots strictly prioritize official songs & music tracks
+  const top10 = songs.slice(0, 10);
+  const remainingSongs = songs.slice(10);
+
+  if (top10.length < 10) {
+    const needed = 10 - top10.length;
+    top10.push(...others.splice(0, needed));
+  }
+
+  // Remainder: Interleave songs with other diverse results (live, covers, reactions, podcasts)
+  const mixedRemainder = [];
+  const maxLen = Math.max(remainingSongs.length, others.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (i < remainingSongs.length) mixedRemainder.push(remainingSongs[i]);
+    if (i < others.length) mixedRemainder.push(others[i]);
+  }
+
+  return [...top10, ...mixedRemainder];
+}
 const MIX_TITLE_RE = /\b(playlist|mix(?:es)?|medley|mash[\s-]?up|non[\s-]?stop|jukebox|compilation|full album|top\s+\d+\s+songs|best songs|lofi mix|song collection)\b/i;
 const TMP = path.join(os.tmpdir(), 'tubegrab');
 fs.mkdirSync(TMP, { recursive: true });
@@ -330,9 +357,6 @@ app.get('/api/search', async (req, res) => {
     ? new Set(String(req.query.exclude || '').split(',').filter(id => ID_RE.test(id)))
     : new Set();
   const seedNumber = [...feedSeed].reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 0);
-  const q = isHomeFeed
-    ? HOME_SEARCHES[seedNumber % HOME_SEARCHES.length]
-    : requestedQuery;
   const page = Number(req.query.page || 0);
   if (!Number.isInteger(page) || page < 0 || page >= MAX_SEARCH_PAGES)
     return res.status(400).json({ error: 'bad page' });
@@ -340,32 +364,62 @@ app.get('/api/search', async (req, res) => {
   const excludeKey = isHomeFeed
     ? crypto.createHash('sha1').update([...excludedIds].sort().join(',')).digest('hex').slice(0, 10)
     : '';
-  const cacheKey = `s:${isHomeFeed ? `home:${feedSeed}:${excludeKey}` : q}:${end}`;
+  const cacheKey = `s:${isHomeFeed ? `home:${feedSeed}:${excludeKey}` : requestedQuery}:${end}`;
   try {
     const entries = await cached(cacheKey, 5 * 60e3, async () => {
-      let count = Math.min(500, end + (isHomeFeed ? 36 : 1));
-      let items = [];
-      while (true) {
-        const d = await runJson(['--flat-playlist', '-J', `ytsearch${count}:${q}`], false);
-        const rawEntries = (d.entries || []).filter(e => e && ID_RE.test(e.id));
-        items = rawEntries
-        .filter(e => !isHomeFeed || (
-          !excludedIds.has(e.id)
-          && !MIX_TITLE_RE.test(e.title || '')
-          && (!e.duration || e.duration <= 15 * 60)
-        ))
-        .map(e => ({
+      if (isHomeFeed) {
+        // Multi-Genre, Multi-Language Diverse Home Feed
+        const numCats = VAST_HOME_CATEGORIES.length;
+        const catPromises = [];
+        for (let i = 0; i < 4; i++) {
+          const catIdx = (seedNumber + i) % numCats;
+          const list = VAST_HOME_CATEGORIES[catIdx];
+          const query = list[(seedNumber + i) % list.length];
+          catPromises.push(
+            runJson(['--flat-playlist', '-J', `ytsearch22:${query}`], false)
+              .then(d => (d.entries || []).filter(e => e && ID_RE.test(e.id)))
+              .catch(() => [])
+          );
+        }
+
+        const catResults = await Promise.all(catPromises);
+        const interleaved = [];
+        const seen = new Set(excludedIds);
+        const maxPerCat = Math.max(...catResults.map(r => r.length), 0);
+
+        for (let step = 0; step < maxPerCat; step++) {
+          for (let c = 0; c < catResults.length; c++) {
+            const item = catResults[c][step];
+            if (item && !seen.has(item.id) && !MIX_TITLE_RE.test(item.title || '') && (!item.duration || item.duration <= 25 * 60)) {
+              seen.add(item.id);
+              interleaved.push({
+                id: item.id,
+                title: item.title,
+                channel: item.channel || item.uploader,
+                duration: item.duration,
+                views: item.view_count,
+                thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+              });
+            }
+          }
+        }
+        return interleaved;
+      }
+
+      // User Search Query: YouTube-style ranking (Song first in top 10, then mixed)
+      const count = Math.min(100, Math.max(40, end + 10));
+      const d = await runJson(['--flat-playlist', '-J', `ytsearch${count}:${requestedQuery}`], false);
+      const rawEntries = (d.entries || []).filter(e => e && ID_RE.test(e.id));
+      const ranked = rankSearchResults(rawEntries);
+
+      return ranked.map(e => ({
         id: e.id,
         title: e.title,
         channel: e.channel || e.uploader,
         duration: e.duration,
         views: e.view_count,
         thumbnail: `https://i.ytimg.com/vi/${e.id}/hqdefault.jpg`,
-        }));
-        if (!isHomeFeed || items.length > end || rawEntries.length < count || count >= 500) break;
-        count = Math.min(500, count + 36);
-      }
-      return items;
+      }));
     });
     const results = entries.slice(page * SEARCH_PAGE_SIZE, end);
     res.json({ results, hasMore: entries.length > end && page + 1 < MAX_SEARCH_PAGES });

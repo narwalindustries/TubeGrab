@@ -112,10 +112,11 @@ docker run -p 3000:3000 tubegrab
 
 ## ⚙️ Configuration (.env)
 
-TubeGrab supports zero-leakage security. Create a `.env` file by copying the template:
+TubeGrab uses a `.env` file for configuration with empty template values ready to fill in:
 
 ```bash
-cp .env.example .env
+# Open .env and set your values:
+notepad .env
 ```
 
 | Variable | Description | Default |

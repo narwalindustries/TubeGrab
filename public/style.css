@@ -220,7 +220,7 @@ main{flex:1;padding:24px}
   color:#fff;
   letter-spacing:-.3px;
 }
-.downloads-header p{display:none}
+.downloads-header p{margin:3px 0 0;font-size:11px;color:#888;display:block}
 .downloads-header-actions{display:flex;align-items:center;gap:8px}
 .downloads-header-actions .close{
   position:static;

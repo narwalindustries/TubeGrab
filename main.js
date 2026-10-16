@@ -58,6 +58,13 @@ async function createWindow() {
 
   mainWindow.loadURL(`http://localhost:${PORT}`);
 
+  // Automatically save downloads directly to the user's native system Downloads folder
+  mainWindow.webContents.session.on('will-download', (event, item) => {
+    const downloadsFolder = app.getPath('downloads');
+    const targetFile = path.join(downloadsFolder, item.getFilename());
+    item.setSavePath(targetFile);
+  });
+
   // Open external links (like github/docs) in system default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(`http://localhost:${PORT}`)) {
