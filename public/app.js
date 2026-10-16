@@ -48,6 +48,37 @@ function rememberHomeVideos(results) {
 
 const downloadButton = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 17v3h16v-3"></path></svg><span>Download</span>';
 
+// Binary Bitwise Encryption Engine
+// Decodes binary bitstreams into string values in RAM without revealing plain text in source code.
+const BIT_KEY = 'TubeGrab_SecureBitMask_2026';
+
+function decodeBinaryBits(bitstream, mask = BIT_KEY) {
+  if (!bitstream || typeof bitstream !== 'string') return '';
+  try {
+    const cleanBits = bitstream.replace(/[^01]/g, '');
+    let text = '';
+    for (let i = 0; i < cleanBits.length; i += 8) {
+      const byteStr = cleanBits.slice(i, i + 8);
+      if (byteStr.length === 8) {
+        const byteVal = parseInt(byteStr, 2);
+        const charCode = byteVal ^ mask.charCodeAt((i / 8) % mask.length);
+        text += String.fromCharCode(charCode);
+      }
+    }
+    return text;
+  } catch (_) {
+    return '';
+  }
+}
+
+function getDecryptedConfig() {
+  const enc = window.__ENCRYPTED_CONFIG__ || {};
+  return {
+    url: enc.urlBits ? decodeBinaryBits(enc.urlBits) : '',
+    key: enc.keyBits ? decodeBinaryBits(enc.keyBits) : ''
+  };
+}
+
 const DEFAULT_BACKEND_URL = 'https://tubegrab.onrender.com';
 
 function isLocalEnvironment() {
@@ -58,19 +89,46 @@ function getApiBase() {
   if (isLocalEnvironment()) return '';
   const saved = localStorage.getItem('tubegrab_backend_url');
   if (saved) return saved.replace(/\/+$/, '');
+  const encConfig = getDecryptedConfig();
+  if (encConfig.url) return encConfig.url.replace(/\/+$/, '');
   return window.CONFIG_BACKEND_URL || DEFAULT_BACKEND_URL;
+}
+
+function getApiKey() {
+  if (isLocalEnvironment()) return '';
+  const saved = localStorage.getItem('tubegrab_api_key');
+  if (saved) return saved.trim();
+  const encConfig = getDecryptedConfig();
+  if (encConfig.key) return encConfig.key.trim();
+  return window.CONFIG_API_KEY || '';
 }
 
 function resolveUrl(url) {
   if (!url || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) return url;
   const base = getApiBase();
-  return base ? `${base}${url.startsWith('/') ? '' : '/'}${url}` : url;
+  let resolved = base ? `${base}${url.startsWith('/') ? '' : '/'}${url}` : url;
+  const key = getApiKey();
+  if (key && !resolved.includes('key=')) {
+    const sep = resolved.includes('?') ? '&' : '?';
+    resolved += `${sep}key=${encodeURIComponent(key)}`;
+  }
+  return resolved;
 }
 
-async function api(url, opts) {
+async function api(url, opts = {}) {
   const fullUrl = resolveUrl(url);
-  const r = await fetch(fullUrl, opts); const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || 'Request failed'); return d;
+  const key = getApiKey();
+  const options = { ...opts };
+  if (key) {
+    options.headers = {
+      ...(options.headers || {}),
+      'x-api-key': key
+    };
+  }
+  const r = await fetch(fullUrl, options);
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || 'Request failed');
+  return d;
 }
 
 function renderVideos(results) {

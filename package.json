@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "app": "electron .",
-    "desktop": "electron ."
+    "desktop": "electron .",
+    "encrypt": "node tools/encrypt-config.js"
   },
   "dependencies": {
     "@distube/ytdl-core": "^4.16.12",

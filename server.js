@@ -12,9 +12,49 @@ process.on('unhandledRejection', reason => {
   console.error('Unhandled Rejection:', reason);
 });
 
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    try {
+      const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const idx = trimmed.indexOf('=');
+        if (idx !== -1) {
+          const key = trimmed.slice(0, idx).trim();
+          const val = trimmed.slice(idx + 1).trim().replace(/^['"]|['"]$/g, '');
+          if (process.env[key] === undefined) process.env[key] = val;
+        }
+      }
+      console.log('[Config] Loaded environment variables from .env');
+    } catch (_) {}
+  }
+}
+loadEnvFile();
+
+const API_SECRET_KEY = process.env.API_SECRET_KEY || '';
+
 const PORT = process.env.PORT || 3000;
 const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
 const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
+
+function autoUpdateYtdlp() {
+  try {
+    const p = spawn(YTDLP, ['-U'], { windowsHide: true });
+    let out = '';
+    p.stdout?.on('data', d => { out += d; });
+    p.stderr?.on('data', d => { out += d; });
+    p.on('close', () => {
+      const line = out.trim().split(/\r?\n/)[0] || '';
+      if (line) console.log(`[Auto-Updater] yt-dlp check: ${line}`);
+    });
+    p.on('error', () => {});
+  } catch (_) {}
+}
+setTimeout(autoUpdateYtdlp, 3000);
+setInterval(autoUpdateYtdlp, 6 * 3600 * 1000);
+
 function getFfmpegDir() {
   if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
     return fs.statSync(process.env.FFMPEG_PATH).isDirectory()
@@ -218,6 +258,16 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.status(200).send('OK'));
+
+// Secret API Key Guard: Enforces authorization if API_SECRET_KEY is set in .env
+app.use('/api', (req, res, next) => {
+  if (!API_SECRET_KEY) return next();
+  const token = req.headers['x-api-key'] ||
+                (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') ||
+                req.query.key;
+  if (token && token === API_SECRET_KEY) return next();
+  return res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' });
+});
 
 const baseArgs = (noPlaylist = true) => {
   const a = ['--no-warnings', '--js-runtimes', 'node'];

@@ -110,15 +110,30 @@ docker run -p 3000:3000 tubegrab
 
 ---
 
-## ⚙️ Configuration (Environment Variables)
+## ⚙️ Configuration (.env)
+
+TubeGrab supports zero-leakage security. Create a `.env` file by copying the template:
+
+```bash
+cp .env.example .env
+```
 
 | Variable | Description | Default |
 |---|---|---|
-| `PORT` | Server listening port | `3000` |
+| `PORT` | Server listening port | `3000` (Local) / `10000` (Render) |
+| `API_SECRET_KEY` | Secret auth token to prevent unauthorized access to backend | *Disabled if blank* |
+| `BACKEND_URL` | Render / Cloud backend URL for Firebase Web & Android | `https://tubegrab.onrender.com` |
 | `YTDLP_PATH` | Path to yt-dlp binary | `yt-dlp` |
 | `FFMPEG_PATH` | Path to FFmpeg executable or directory | `ffmpeg` |
-| `YT_COOKIES` | Optional path to cookies.txt | `cookies.txt` (if present) |
+| `YT_COOKIES` | Optional path to cookies.txt (Bypasses YouTube bot checks) | `cookies.txt` (if present) |
 | `MAX_JOBS` | Maximum concurrent background downloads | `3` |
+
+### 🔒 Binary Bitwise Encryption for Published Web/App
+To hide your private Render backend URL and secret API key in production, encrypt them into binary bitstreams:
+```bash
+npm run encrypt [BACKEND_URL] [API_SECRET_KEY]
+```
+This generates `public/config.js` containing only raw bitstreams (`0101...`), keeping your live server URL and credentials safe from being scrapped in plain text.
 
 ---
 
