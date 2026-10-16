@@ -15,3 +15,5 @@ Thumbs.db
 *.ytdl
 dist/
 build/
+bin/
+*.zip

@@ -65,10 +65,8 @@ If you are looking for a hassle-free **YouTube downloader**, TubeGrab is the per
 
 ### Prerequisites
 
-Ensure you have the following installed:
-- **Node.js** (v18 or higher)
-- **yt-dlp** (`pip install -U yt-dlp` or binary from [yt-dlp releases](https://github.com/yt-dlp/yt-dlp/releases))
-- **FFmpeg** (`winget install Gyan.FFmpeg` on Windows, or `sudo apt install ffmpeg` on Linux)
+* **Node.js** (v18 or higher)
+* *(Zero manual media setup: `yt-dlp` and `FFmpeg` are automatically downloaded and auto-updated on-the-fly for your operating system and architecture on first launch!)*
 
 ### Installation & Running
 

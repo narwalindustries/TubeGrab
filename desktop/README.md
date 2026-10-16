@@ -12,4 +12,4 @@ npm run desktop
 ## 🛠️ Requirements
 - Windows 10/11
 - Node.js (v18+)
-- yt-dlp & FFmpeg installed on system PATH
+- *(yt-dlp & FFmpeg are auto-downloaded & auto-updated automatically on first launch!)*

@@ -1,5 +1,7 @@
 const express = require('express');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const http = require('http');
+const https = require('https');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -34,43 +36,276 @@ function loadEnvFile() {
 loadEnvFile();
 
 const API_SECRET_KEY = process.env.API_SECRET_KEY || '';
-
 const PORT = process.env.PORT || 3000;
-const YTDLP = process.env.YTDLP_PATH || 'yt-dlp';
-const FFMPEG = process.env.FFMPEG_PATH || 'ffmpeg';
 
-function autoUpdateYtdlp() {
+// ---------- Platform-Independent Binary Auto-Downloader & Auto-Updater ----------
+const BIN_DIR = path.join(__dirname, 'bin');
+try { fs.mkdirSync(BIN_DIR, { recursive: true }); } catch (_) {}
+
+function downloadFile(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const curlCmd = process.platform === 'win32' ? 'curl.exe' : 'curl';
+    try {
+      execSync(`${curlCmd} -L -f -s -S --retry 3 "${url}" -o "${destPath}"`, { stdio: 'ignore' });
+      if (fs.existsSync(destPath) && fs.statSync(destPath).size > 1000) {
+        if (process.platform !== 'win32') {
+          try { fs.chmodSync(destPath, 0o755); } catch (_) {}
+        }
+        return resolve(destPath);
+      }
+    } catch (_) {}
+
+    // Fallback: Node.js native https/http with redirect follower
+    const makeRequest = (currentUrl, redirects = 0) => {
+      if (redirects > 8) return reject(new Error('Too many redirects'));
+      try {
+        const parsed = new URL(currentUrl);
+        const client = parsed.protocol === 'http:' ? http : https;
+        const req = client.get(parsed, { headers: { 'User-Agent': 'TubeGrab/1.0 (Downloader)' } }, res => {
+          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+            res.resume();
+            const nextUrl = new URL(res.headers.location, currentUrl).href;
+            return makeRequest(nextUrl, redirects + 1);
+          }
+          if (res.statusCode !== 200) {
+            res.resume();
+            return reject(new Error(`Failed to download: status ${res.statusCode}`));
+          }
+          const fileStream = fs.createWriteStream(destPath);
+          res.pipe(fileStream);
+          fileStream.on('finish', () => {
+            fileStream.close(() => {
+              if (process.platform !== 'win32') {
+                try { fs.chmodSync(destPath, 0o755); } catch (_) {}
+              }
+              resolve(destPath);
+            });
+          });
+          fileStream.on('error', err => {
+            try { fs.unlinkSync(destPath); } catch (_) {}
+            reject(err);
+          });
+        });
+        req.on('error', reject);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    makeRequest(url);
+  });
+}
+
+function extractZip(zipPath, targetDir) {
+  if (process.platform === 'win32') {
+    try {
+      execSync(`tar.exe -xf "${zipPath}" -C "${targetDir}"`, { stdio: 'ignore' });
+    } catch (_) {
+      try {
+        execSync(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${targetDir}' -Force"`, { stdio: 'ignore' });
+      } catch (_) {}
+    }
+  } else {
+    try {
+      execSync(`unzip -o "${zipPath}" -d "${targetDir}"`, { stdio: 'ignore' });
+    } catch (_) {
+      try {
+        execSync(`tar -xf "${zipPath}" -C "${targetDir}"`, { stdio: 'ignore' });
+      } catch (_) {}
+    }
+  }
+}
+
+function resolveBinary(name) {
+  const isWin = process.platform === 'win32';
+  const binaryName = isWin ? `${name}.exe` : name;
+  const localBin = path.join(BIN_DIR, binaryName);
+  if (fs.existsSync(localBin)) {
+    if (!isWin) try { fs.chmodSync(localBin, 0o755); } catch (_) {}
+    return localBin;
+  }
+
+  const envKey = name.toLowerCase() === 'yt-dlp' ? 'YTDLP_PATH' : `${name.toUpperCase()}_PATH`;
+  if (process.env[envKey] && fs.existsSync(process.env[envKey])) return process.env[envKey];
+
   try {
-    const p = spawn(YTDLP, ['-U'], { windowsHide: true });
+    const cmd = isWin ? `where.exe ${binaryName}` : `which ${binaryName}`;
+    const out = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(/\r?\n/)[0];
+    if (out && fs.existsSync(out)) return out;
+  } catch (_) {}
+
+  if (isWin) {
+    const wingetLink = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links', binaryName);
+    if (fs.existsSync(wingetLink)) return wingetLink;
+  }
+
+  return localBin;
+}
+
+let YTDLP = resolveBinary('yt-dlp');
+let FFMPEG = resolveBinary('ffmpeg');
+
+let isUpdatingYtdlp = false;
+let lastUpdateCheck = 0;
+
+function autoUpdateYtdlp(force = false) {
+  if (isUpdatingYtdlp) return;
+  if (!force && Date.now() - lastUpdateCheck < 60 * 60 * 1000) return;
+  const binary = resolveBinary('yt-dlp') || YTDLP;
+  if (!binary || !fs.existsSync(binary)) return;
+
+  isUpdatingYtdlp = true;
+  lastUpdateCheck = Date.now();
+
+  try {
+    const p = spawn(binary, ['-U'], { windowsHide: true });
     let out = '';
     p.stdout?.on('data', d => { out += d; });
     p.stderr?.on('data', d => { out += d; });
     p.on('close', () => {
+      isUpdatingYtdlp = false;
       const line = out.trim().split(/\r?\n/)[0] || '';
-      if (line) console.log(`[Auto-Updater] yt-dlp check: ${line}`);
+      if (line) console.log(`[Auto-Updater] yt-dlp: ${line}`);
+      YTDLP = resolveBinary('yt-dlp');
     });
-    p.on('error', () => {});
-  } catch (_) {}
+    p.on('error', () => { isUpdatingYtdlp = false; });
+  } catch (_) {
+    isUpdatingYtdlp = false;
+  }
 }
-setTimeout(autoUpdateYtdlp, 3000);
-setInterval(autoUpdateYtdlp, 6 * 3600 * 1000);
+
+let binariesReadyPromise = null;
+
+function ensureBinaries() {
+  if (binariesReadyPromise) return binariesReadyPromise;
+
+  binariesReadyPromise = (async () => {
+    const isWin = process.platform === 'win32';
+    const isMac = process.platform === 'darwin';
+    const arch = process.arch;
+
+    // 1. Ensure yt-dlp is present
+    let currentYtdlp = resolveBinary('yt-dlp');
+    if (!fs.existsSync(currentYtdlp)) {
+      console.log(`[Auto-Setup] yt-dlp missing on ${process.platform} (${arch}). Auto-downloading standalone binary...`);
+      let ytdlpUrl = '';
+      if (isWin) {
+        ytdlpUrl = arch === 'arm64'
+          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_arm64.exe'
+          : (arch === 'ia32'
+            ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_x86.exe'
+            : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe');
+      } else if (isMac) {
+        ytdlpUrl = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos';
+      } else {
+        // Linux: Standalone binary with bundled Python
+        ytdlpUrl = (arch === 'arm64' || arch === 'aarch64')
+          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64'
+          : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
+      }
+
+      const target = path.join(BIN_DIR, isWin ? 'yt-dlp.exe' : 'yt-dlp');
+      try {
+        await downloadFile(ytdlpUrl, target);
+      } catch (err) {
+        if (!isWin) {
+          try {
+            await downloadFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', target);
+          } catch (_) {}
+        }
+      }
+
+      if (fs.existsSync(target)) {
+        if (!isWin) try { fs.chmodSync(target, 0o755); } catch (_) {}
+        YTDLP = target;
+        console.log(`[Auto-Setup] yt-dlp successfully installed: ${target}`);
+      }
+    } else {
+      YTDLP = currentYtdlp;
+    }
+
+    // 2. Ensure ffmpeg is present
+    let currentFfmpeg = resolveBinary('ffmpeg');
+    if (!fs.existsSync(currentFfmpeg)) {
+      console.log(`[Auto-Setup] ffmpeg missing on ${process.platform} (${arch}). Auto-downloading static bundle...`);
+      let ffmpegZipUrl = '';
+      if (isWin) {
+        ffmpegZipUrl = arch === 'ia32'
+          ? 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-win-32.zip'
+          : 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-win-64.zip';
+      } else if (isMac) {
+        ffmpegZipUrl = 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-osx-64.zip';
+      } else {
+        ffmpegZipUrl = (arch === 'arm64' || arch === 'aarch64')
+          ? 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-linux-arm-64.zip'
+          : (arch === 'arm'
+            ? 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-linux-armhf-32.zip'
+            : 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffmpeg-4.4.1-linux-64.zip');
+      }
+
+      const zipPath = path.join(BIN_DIR, 'ffmpeg-temp.zip');
+      try {
+        await downloadFile(ffmpegZipUrl, zipPath);
+        extractZip(zipPath, BIN_DIR);
+        try { fs.unlinkSync(zipPath); } catch (_) {}
+        const extractedFfmpeg = path.join(BIN_DIR, isWin ? 'ffmpeg.exe' : 'ffmpeg');
+        if (fs.existsSync(extractedFfmpeg)) {
+          if (!isWin) try { fs.chmodSync(extractedFfmpeg, 0o755); } catch (_) {}
+          FFMPEG = extractedFfmpeg;
+          console.log(`[Auto-Setup] ffmpeg successfully installed: ${extractedFfmpeg}`);
+        }
+      } catch (err) {
+        console.warn('[Auto-Setup] Could not auto-download ffmpeg:', err.message);
+      }
+    } else {
+      FFMPEG = currentFfmpeg;
+    }
+
+    // 3. Ensure ffprobe is present
+    const ffprobeName = isWin ? 'ffprobe.exe' : 'ffprobe';
+    const localFfprobe = path.join(BIN_DIR, ffprobeName);
+    if (!fs.existsSync(localFfprobe) && !resolveBinary('ffprobe')) {
+      let ffprobeZipUrl = '';
+      if (isWin) {
+        ffprobeZipUrl = arch === 'ia32'
+          ? 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffprobe-4.4.1-win-32.zip'
+          : 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffprobe-4.4.1-win-64.zip';
+      } else if (isMac) {
+        ffprobeZipUrl = 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffprobe-4.4.1-osx-64.zip';
+      } else {
+        ffprobeZipUrl = (arch === 'arm64' || arch === 'aarch64')
+          ? 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffprobe-4.4.1-linux-arm-64.zip'
+          : 'https://github.com/ffbinaries/ffbinaries-prebuilt/releases/download/v4.4.1/ffprobe-4.4.1-linux-64.zip';
+      }
+      if (ffprobeZipUrl) {
+        const probeZipPath = path.join(BIN_DIR, 'ffprobe-temp.zip');
+        try {
+          await downloadFile(ffprobeZipUrl, probeZipPath);
+          extractZip(probeZipPath, BIN_DIR);
+          try { fs.unlinkSync(probeZipPath); } catch (_) {}
+          if (!isWin && fs.existsSync(localFfprobe)) {
+            try { fs.chmodSync(localFfprobe, 0o755); } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    }
+
+    autoUpdateYtdlp();
+  })();
+
+  return binariesReadyPromise;
+}
+
+ensureBinaries().catch(() => {});
+setInterval(() => autoUpdateYtdlp(true), 6 * 3600 * 1000);
 
 function getFfmpegDir() {
-  if (process.env.FFMPEG_PATH && fs.existsSync(process.env.FFMPEG_PATH)) {
-    return fs.statSync(process.env.FFMPEG_PATH).isDirectory()
-      ? process.env.FFMPEG_PATH
-      : path.dirname(process.env.FFMPEG_PATH);
+  const binary = resolveBinary('ffmpeg') || FFMPEG;
+  if (binary && fs.existsSync(binary)) {
+    return fs.statSync(binary).isDirectory() ? binary : path.dirname(binary);
   }
-  const wingetDir = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WinGet', 'Links');
-  if (fs.existsSync(path.join(wingetDir, 'ffmpeg.exe'))) return wingetDir;
-  try {
-    const cmd = process.platform === 'win32' ? 'where.exe ffmpeg' : 'which ffmpeg';
-    const out = require('child_process').execSync(cmd, { encoding: 'utf8' }).trim().split(/\r?\n/)[0];
-    if (out && fs.existsSync(out)) return path.dirname(out);
-  } catch (_) {}
-  return '';
+  return BIN_DIR;
 }
-const FFMPEG_DIR = getFfmpegDir();
+
 const DEFAULT_QUERY = process.env.DEFAULT_QUERY || '';
 const MAX_JOBS = parseInt(process.env.MAX_JOBS || '3', 10);
 const SEARCH_PAGE_SIZE = 24;
@@ -87,28 +322,56 @@ function getCookiesPath() {
   return '';
 }
 
+function resolvePython() {
+  if (process.env.PYTHON_PATH && fs.existsSync(process.env.PYTHON_PATH)) return process.env.PYTHON_PATH;
+  const isWin = process.platform === 'win32';
+  try {
+    const cmd = isWin ? 'where.exe python.exe' : 'which python3 || which python';
+    const out = execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim().split(/\r?\n/)[0];
+    if (out && fs.existsSync(out)) return out;
+  } catch (_) {}
+  return isWin ? 'python.exe' : 'python3';
+}
+
 function syncCookiesFromBrowser(force = false) {
   const local = path.join(__dirname, 'cookies.txt');
   if (!force && fs.existsSync(local) && (Date.now() - fs.statSync(local).mtimeMs < 6 * 3600 * 1000)) return;
-  const pyScript = `
+
+  const ytdlpBin = resolveBinary('yt-dlp');
+  if (ytdlpBin && fs.existsSync(ytdlpBin)) {
+    for (const browser of ['brave', 'chrome', 'edge', 'firefox']) {
+      try {
+        const p = spawn(ytdlpBin, ['--cookies-from-browser', browser, '--cookies', local, '--skip-download', 'https://www.youtube.com'], {
+          cwd: __dirname,
+          windowsHide: true,
+          stdio: 'ignore'
+        });
+        p.on('close', code => {
+          if (code === 0 && fs.existsSync(local) && fs.statSync(local).size > 100) {
+            innertubePromise = null;
+          }
+        });
+        break;
+      } catch (_) {}
+    }
+  } else {
+    const pyScript = `
 import yt_dlp
 for b in ['brave', 'chrome', 'edge', 'firefox']:
     try:
         ydl_opts = {'cookiesfrombrowser': (b, None, None, None), 'cookiefile': 'cookies.txt', 'quiet': True}
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.cookiejar.save('cookies.txt', ignore_discard=True, ignore_expires=True)
-            print(f'Synced cookies from {b}')
             break
     except Exception:
         continue
 `;
-  const pythonBin = process.platform === 'win32'
-    ? 'C:\\Users\\narwa\\AppData\\Local\\Programs\\Python\\Python311\\python.exe'
-    : 'python3';
-  try {
-    const p = spawn(pythonBin, ['-c', pyScript], { cwd: __dirname, windowsHide: true, stdio: 'ignore' });
-    p.on('close', () => { innertubePromise = null; });
-  } catch (_) {}
+    const pythonBin = resolvePython();
+    try {
+      const p = spawn(pythonBin, ['-c', pyScript], { cwd: __dirname, windowsHide: true, stdio: 'ignore' });
+      p.on('close', () => { innertubePromise = null; });
+    } catch (_) {}
+  }
 }
 syncCookiesFromBrowser();
 setInterval(() => syncCookiesFromBrowser(true), 6 * 3600 * 1000);
@@ -304,29 +567,43 @@ const baseArgs = (noPlaylist = true) => {
   return a;
 };
 
-function runJson(args, noPlaylist = true) {
+async function runJson(args, noPlaylist = true) {
+  await ensureBinaries();
+  const binary = resolveBinary('yt-dlp') || YTDLP;
   return new Promise((resolve, reject) => {
-    const p = spawn(YTDLP, [...baseArgs(noPlaylist), ...args]);
+    const p = spawn(binary, [...baseArgs(noPlaylist), ...args]);
     let out = '', err = '';
     p.stdout.on('data', d => (out += d));
     p.stderr.on('data', d => (err += d));
-    p.on('error', () => reject(new Error('yt-dlp is not installed or could not be found on PATH')));
+    p.on('error', () => reject(new Error('yt-dlp is not available')));
     p.on('close', code => {
-      if (code !== 0) return reject(new Error(err.trim().split('\n').pop() || 'yt-dlp failed'));
+      if (code !== 0) {
+        if (/extractor|signature|player|cipher|confirm you’re not a bot|login|unable to extract/i.test(err)) {
+          autoUpdateYtdlp(true);
+        }
+        return reject(new Error(err.trim().split('\n').pop() || 'yt-dlp failed'));
+      }
       try { resolve(JSON.parse(out)); } catch (e) { reject(e); }
     });
   });
 }
 
-function runLines(args) {
+async function runLines(args) {
+  await ensureBinaries();
+  const binary = resolveBinary('yt-dlp') || YTDLP;
   return new Promise((resolve, reject) => {
-    const p = spawn(YTDLP, [...baseArgs(), ...args]);
+    const p = spawn(binary, [...baseArgs(), ...args]);
     let out = '', err = '';
     p.stdout.on('data', d => (out += d));
     p.stderr.on('data', d => (err += d));
-    p.on('error', () => reject(new Error('yt-dlp is not installed or could not be found on PATH')));
+    p.on('error', () => reject(new Error('yt-dlp is not available')));
     p.on('close', code => {
-      if (code !== 0) return reject(new Error(err.trim().split('\n').pop() || 'yt-dlp failed'));
+      if (code !== 0) {
+        if (/extractor|signature|player|cipher|confirm you’re not a bot|login|unable to extract/i.test(err)) {
+          autoUpdateYtdlp(true);
+        }
+        return reject(new Error(err.trim().split('\n').pop() || 'yt-dlp failed'));
+      }
       resolve(out.trim().split(/\r?\n/).filter(Boolean));
     });
   });
@@ -604,8 +881,10 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
   let ffmpegProc = null;
 
   try {
-    ytdlpProc = spawn(YTDLP, ytdlpArgs, { windowsHide: true });
-    ffmpegProc = spawn(FFMPEG, ffmpegArgs, { windowsHide: true });
+    const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
+    const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
+    ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
+    ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
 
     ytdlpProc.stdin?.on('error', () => {});
     ytdlpProc.stdout?.on('error', () => {});
@@ -670,7 +949,8 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
               '-f', 'mp4',
               'pipe:1'
             );
-            const fbFfmpeg = spawn(FFMPEG, fbArgs, { windowsHide: true });
+            const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
+            const fbFfmpeg = spawn(ffmpegBin, fbArgs, { windowsHide: true });
             fbFfmpeg.stdin?.on('error', () => {});
             fbFfmpeg.stdout?.on('error', () => {});
             fbFfmpeg.stderr?.on('error', () => {});
@@ -832,8 +1112,10 @@ app.get('/api/stream/:id', async (req, res) => {
       'pipe:1'
     );
     try {
-      const pYt = spawn(YTDLP, ytdlpArgs, { windowsHide: true });
-      const pFf = spawn(FFMPEG, ffmpegArgs, { windowsHide: true });
+      const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
+      const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
+      const pYt = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
+      const pFf = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
 
       pYt.stdin?.on('error', () => {});
       pYt.stdout?.on('error', () => {});
@@ -1060,7 +1342,7 @@ function isTransientDownloadError(message) {
   return /(temporary|timed?\s*out|timeout|connection|network|resolve|dns|name or service not known|temporary failure|http error 5\d\d|http error 429|giving up after \d+ retries)/i.test(message);
 }
 
-function startDownloadAttempt(jobId, job, attempt = 1) {
+async function startDownloadAttempt(jobId, job, attempt = 1) {
   job.status = 'running';
   job.attempt = attempt;
   job.stage = attempt === 1 ? 'Starting' : `Retrying connection (${attempt}/${MAX_DOWNLOAD_ATTEMPTS})`;
@@ -1069,7 +1351,7 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
   const finishAttempt = (code, spawnError) => {
     if (settled) return;
     settled = true;
-    if (spawnError) err = 'yt-dlp is not installed or could not be found on PATH';
+    if (spawnError) err = 'yt-dlp could not be started';
     const mediaExts = /\.(mp4|webm|mkv|mp3|m4a|opus|ogg|flac|wav|aac)$/i;
     let files = [];
     try {
@@ -1104,6 +1386,9 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
       }, delay);
       return;
     }
+    if (/extractor|signature|player|cipher|confirm you’re not a bot|login|unable to extract/i.test(err)) {
+      autoUpdateYtdlp(true);
+    }
     job.status = 'error';
     job.stage = 'Failed';
     job.error = message;
@@ -1111,15 +1396,19 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
     dispatchNextQueuedJob();
   };
 
+  await ensureBinaries();
+  const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
+  const ffmpegDir = getFfmpegDir();
+
   const pArgs = [
     ...baseArgs(), ...DOWNLOAD_RETRY_ARGS, '--newline', '--concurrent-fragments', '4', '--windows-filenames',
   ];
-  if (FFMPEG_DIR) pArgs.push('--ffmpeg-location', FFMPEG_DIR);
+  if (ffmpegDir) pArgs.push('--ffmpeg-location', ffmpegDir);
   pArgs.push(
     '-o', path.join(job.dir, '%(title).100s.%(ext)s'), ...job.args,
     `https://www.youtube.com/watch?v=${job.videoId}`
   );
-  const p = spawn(YTDLP, pArgs);
+  const p = spawn(ytdlpBin, pArgs);
   job.process = p;
   p.stdout.on('data', d => {
     const s = d.toString();
