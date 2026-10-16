@@ -17,3 +17,4 @@ dist/
 build/
 bin/
 *.zip
+.firebase/
