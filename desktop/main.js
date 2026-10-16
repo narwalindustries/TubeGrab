@@ -39,9 +39,7 @@ function startBackendServer() {
 }
 
 async function createWindow() {
-  const iconFile = process.platform === 'win32'
-    ? (fs.existsSync(path.join(__dirname, 'icon.ico')) ? path.join(__dirname, 'icon.ico') : path.join(__dirname, 'icon.png'))
-    : path.join(__dirname, 'icon.png');
+  const logoFile = path.join(__dirname, '..', 'public', 'logo.png');
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -49,7 +47,7 @@ async function createWindow() {
     minWidth: 460,
     minHeight: 560,
     title: 'TubeGrab',
-    icon: iconFile,
+    icon: logoFile,
     backgroundColor: '#0f0f0f',
     autoHideMenuBar: true,
     webPreferences: {

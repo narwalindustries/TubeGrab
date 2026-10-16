@@ -9,14 +9,8 @@
   "description": "Watch, stream, and download YouTube videos in all resolutions and MP3 audio.",
   "icons": [
     {
-      "src": "icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
-    },
-    {
-      "src": "icon-512.png",
-      "sizes": "512x512",
+      "src": "logo.png",
+      "sizes": "any",
       "type": "image/png",
       "purpose": "any maskable"
     }
