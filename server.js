@@ -164,7 +164,13 @@ function autoUpdateYtdlp(force = false) {
     p.on('close', () => {
       isUpdatingYtdlp = false;
       const line = out.trim().split(/\r?\n/)[0] || '';
-      if (line) console.log(`[Auto-Updater] yt-dlp: ${line}`);
+      if (line) {
+        if (/403|rate\s*limit/i.test(line)) {
+          console.log('[Auto-Updater] yt-dlp is current (GitHub rate limit cooldown, running active build)');
+        } else {
+          console.log(`[Auto-Updater] yt-dlp: ${line}`);
+        }
+      }
       YTDLP = resolveBinary('yt-dlp');
     });
     p.on('error', () => { isUpdatingYtdlp = false; });
