@@ -1,6 +1,11 @@
 const { app, BrowserWindow, shell } = require('electron');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.tubegrab');
+}
 
 const PORT = process.env.PORT || 3000;
 let mainWindow = null;
@@ -34,12 +39,17 @@ function startBackendServer() {
 }
 
 async function createWindow() {
+  const iconFile = process.platform === 'win32'
+    ? (fs.existsSync(path.join(__dirname, 'icon.ico')) ? path.join(__dirname, 'icon.ico') : path.join(__dirname, 'icon.png'))
+    : path.join(__dirname, 'icon.png');
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 840,
     minWidth: 460,
     minHeight: 560,
     title: 'TubeGrab',
+    icon: iconFile,
     backgroundColor: '#0f0f0f',
     autoHideMenuBar: true,
     webPreferences: {

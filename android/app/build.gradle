@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.narwal.tubegrab'
+    namespace 'com.tubegrab'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.narwal.tubegrab"
+        applicationId "com.tubegrab"
         minSdk 24
         targetSdk 34
         versionCode 1

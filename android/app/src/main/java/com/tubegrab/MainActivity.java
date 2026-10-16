@@ -1,4 +1,4 @@
-package com.narwal.tubegrab;
+package com.tubegrab;
 
 import android.app.Activity;
 import android.app.DownloadManager;
