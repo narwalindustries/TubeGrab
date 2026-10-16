@@ -115,16 +115,25 @@ function resolveUrl(url) {
   return resolved;
 }
 
+function getClientId() {
+  let id = localStorage.getItem('tubegrab_client_id');
+  if (!id) {
+    id = 'c_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem('tubegrab_client_id', id); } catch (_) {}
+  }
+  return id;
+}
+
 async function api(url, opts = {}) {
   const fullUrl = resolveUrl(url);
   const key = getApiKey();
   const options = { ...opts };
+  const headers = { ...(options.headers || {}) };
+  headers['x-client-id'] = getClientId();
   if (key) {
-    options.headers = {
-      ...(options.headers || {}),
-      'x-api-key': key
-    };
+    headers['x-api-key'] = key;
   }
+  options.headers = headers;
   const r = await fetch(fullUrl, options);
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Request failed');
@@ -800,22 +809,28 @@ function downloadCompletedFile(job) {
 }
 
 function renderDownloads(jobs) {
-  const activeCount = jobs.filter(job => job.status === 'running').length;
+  const activeCount = jobs.filter(job => job.status === 'running' || job.status === 'queued').length;
   $('#downloadsButton').setAttribute('aria-label',
     activeCount ? `Open downloads, ${activeCount} in progress` : 'Open downloads');
 
   const clearBtn = $('#clearDownloadsBtn');
   if (clearBtn) {
-    const hasClearable = jobs.some(job => job.status !== 'running');
+    const hasClearable = jobs.some(job => job.status !== 'running' && job.status !== 'queued');
     clearBtn.disabled = !hasClearable;
   }
 
+  const fairUsageBanner = `
+    <div class="fair-usage-notice">
+      <span class="fair-usage-icon">🛡️</span>
+      <span><strong>Fair-Usage Protection:</strong> Up to 2 downloads run simultaneously to maintain peak bandwidth. Additional downloads are safely queued and start automatically.</span>
+    </div>`;
+
   if (!jobs.length) {
-    $('#downloadsList').innerHTML = '<div class="downloads-empty"><p>No downloads yet.</p><span>Started downloads will continue while TubeGrab is running.</span></div>';
+    $('#downloadsList').innerHTML = `${fairUsageBanner}<div class="downloads-empty"><p>No downloads yet.</p><span>Started downloads will continue while TubeGrab is running.</span></div>`;
     return activeCount;
   }
 
-  $('#downloadsList').innerHTML = jobs.map(job => {
+  const itemsHtml = jobs.map(job => {
     const audioLabels = {
       'mp3-320': 'MP3 · 320 kbps',
       'mp3-192': 'MP3 · 192 kbps',
@@ -828,31 +843,40 @@ function renderDownloads(jobs) {
       : `Audio · ${esc(audioLabels[job.quality] || job.quality)}`;
     const progress = Math.max(0, Math.min(100, Number(job.progress) || 0));
     const running = job.status === 'running';
+    const queued = job.status === 'queued';
     const done = job.status === 'done';
-    const stage = job.stage === 'Downloading'
-      ? `${esc(job.stage)} · ${Math.round(progress)}%`
-      : esc(job.stage || (done ? 'Completed' : 'Starting'));
+    const stateClass = running ? 'is-running' : queued ? 'is-queued' : done ? 'is-done' : 'is-error';
+    const stateLabel = running ? 'In progress' : queued ? (job.queuePosition ? `In queue (#${job.queuePosition})` : 'In queue') : done ? 'Completed' : 'Failed';
+    const stage = running
+      ? (job.stage === 'Downloading' ? `${esc(job.stage)} · ${Math.round(progress)}%` : esc(job.stage || 'Starting'))
+      : queued
+        ? esc(job.stage || 'In queue · Waiting for slot')
+        : done
+          ? 'Ready to save'
+          : esc(job.error || 'Download failed');
     const action = done
       ? `<a class="download-file" href="${resolveUrl(`/api/jobs/${encodeURIComponent(job.id)}/file`)}" download="${esc(job.filename || '')}">Download file</a>`
-      : running
+      : running || queued
         ? ''
         : `<button class="retry-download" type="button" data-retry="${encodeURIComponent(job.id)}">Retry</button>`;
     const removeBtn = running
       ? ''
       : `<button class="remove-download" type="button" data-remove="${encodeURIComponent(job.id)}" aria-label="Remove download" title="Remove">✕</button>`;
 
-    return `<article class="download-item">
+    return `<article class="download-item ${queued ? 'is-queued' : ''}">
       <div class="download-item-heading">
         <div><h3>${esc(job.title || 'Untitled download')}</h3><p>${format}</p></div>
         <div class="download-item-meta">
-          <span class="download-state ${running ? 'is-running' : done ? 'is-done' : 'is-error'}">${running ? 'In progress' : done ? 'Completed' : 'Failed'}</span>
+          <span class="download-state ${stateClass}">${stateLabel}</span>
           ${removeBtn}
         </div>
       </div>
-      <div class="bar"><i style="width:${done ? 100 : progress}%"></i></div>
-      <div class="download-item-footer"><span class="${job.status === 'error' ? 'err' : ''}">${running ? stage : done ? 'Ready to save' : esc(job.error || 'Download failed')}</span>${action}</div>
+      <div class="bar"><i style="width:${done ? 100 : (queued ? 100 : progress)}%"></i></div>
+      <div class="download-item-footer"><span class="${job.status === 'error' ? 'err' : ''}">${stage}</span>${action}</div>
     </article>`;
   }).join('');
+
+  $('#downloadsList').innerHTML = `${fairUsageBanner}${itemsHtml}`;
   return activeCount;
 }
 
@@ -964,20 +988,29 @@ async function openDownload(id, title) {
 
 async function startJob(id, title, kind, q) {
   const prog = $('#prog');
-  prog.innerHTML = '<p style="color:#71dda0;margin:6px 0 0;font-weight:600;">✓ Download started!</p>';
+  prog.innerHTML = '<p style="color:#71dda0;margin:6px 0 0;font-weight:600;">Connecting to processing engine…</p>';
   try {
-    const { jobId } = await api('/api/jobs', {
+    const res = await api('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id, title, kind, q }),
     });
-    pendingAutoDownloads.add(jobId);
-    persistPendingAutoDownloads();
+    if (res.jobId) {
+      pendingAutoDownloads.add(res.jobId);
+      persistPendingAutoDownloads();
+    }
     refreshDownloads();
+    if (res.status === 'queued') {
+      prog.innerHTML = `<p style="color:#7dd3fc;margin:6px 0 0;font-size:12.5px;font-weight:600;">⏳ Queued (#${res.queuePosition || 1}) — Starts automatically as soon as an active download finishes.</p>`;
+    } else {
+      prog.innerHTML = '<p style="color:#71dda0;margin:6px 0 0;font-weight:600;">✓ Download started!</p>';
+    }
     setTimeout(() => {
       closeModal($('#dlModal'));
-    }, 800);
-  } catch (e) { prog.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    }, 1100);
+  } catch (e) {
+    prog.innerHTML = `<p class="err" style="margin:8px 0 0;font-size:12.5px;line-height:1.4;">${esc(e.message)}</p>`;
+  }
 }
 
 // ---------- boot & server connection ----------
@@ -1019,7 +1052,7 @@ function showWakeupModal() {
     cfgBtn.onclick = (e) => {
       e.preventDefault();
       const current = getApiBase() || DEFAULT_BACKEND_URL;
-      const input = prompt('Enter your Render Backend URL:', current);
+      const input = prompt('Enter Cloud Backend Server URL:', current);
       if (input && input.trim()) {
         localStorage.setItem('tubegrab_backend_url', input.trim().replace(/\/+$/, ''));
         location.reload();
@@ -1032,7 +1065,7 @@ function showWakeupModal() {
       wakeBtn.disabled = true;
       wakeBtn.style.opacity = '0.5';
       loadingArea.hidden = false;
-      statusText.textContent = 'Status: Waking up instance…';
+      statusText.textContent = 'Status: Connecting to cloud node…';
 
       // Trigger wake request
       fetch(resolveUrl('/health')).catch(() => {});
@@ -1046,7 +1079,7 @@ function showWakeupModal() {
           if (statusDot) statusDot.classList.add('online');
           statusText.textContent = 'Status: Connected! Loading app…';
           const lbl = $('#serverLoadingText');
-          if (lbl) lbl.textContent = '✓ Cloud engine ready!';
+          if (lbl) lbl.textContent = '✓ Cloud node connected!';
           setTimeout(() => {
             modal.hidden = true;
             loadResults(true);
@@ -1082,7 +1115,7 @@ async function boot() {
     refreshDownloads();
     if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
   } else {
-    statusEl.textContent = 'Cloud server is sleeping. Click "Connect & Wake Up Server" above.';
+    statusEl.textContent = 'Cloud processing node is in standby. Click "Connect & Initialize Engine" above.';
     showWakeupModal();
   }
 }

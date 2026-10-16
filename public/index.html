@@ -134,37 +134,39 @@
     <h2 id="dTitle">Download</h2>
     <div id="dBody"></div>
   </div>
+</div>
+
 <div class="overlay" id="serverWakeupModal" hidden>
   <div class="server-modal">
     <div class="server-badge">
-      <span class="leaf-icon">🌱</span>
-      <span>Eco Cloud Engine</span>
+      <span class="leaf-icon">⚡</span>
+      <span>High-Speed Cloud Engine</span>
     </div>
-    <h2>Server in Power-Saving Mode</h2>
+    <h2>Cloud Processing Node on Standby</h2>
     <p class="server-desc">
-      TubeGrab runs on eco-friendly cloud instances that automatically sleep to save compute power. Click below to wake up the engine.
+      To maintain high-speed throughput and prevent server congestion during peak traffic, our processing nodes pause when idle. Initializing takes only a few moments.
     </p>
 
     <div class="server-status-box" id="serverStatusBox">
       <div class="server-pulse-dot" id="serverPulseDot"></div>
-      <span id="serverStatusText">Status: Standby (Sleeping)</span>
+      <span id="serverStatusText">Status: Standby (Idle)</span>
     </div>
 
     <button id="wakeServerBtn" class="wake-btn" type="button">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
         <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
       </svg>
-      <span>Connect & Wake Up Server</span>
+      <span>Connect & Initialize Engine</span>
     </button>
 
     <div id="serverLoadingArea" class="server-loading-area" hidden>
       <div class="server-spinner"></div>
-      <p id="serverLoadingText">Waking up cloud engine… (Takes ~30–45s on cold start)</p>
+      <p id="serverLoadingText">Connecting to cloud node… (Allocating dedicated processing pipeline)</p>
       <div class="server-progress-bar"><div class="server-progress-fill"></div></div>
     </div>
 
     <div class="server-footer-note">
-      <a href="#" id="changeBackendUrlBtn">⚙️ Configure Backend URL</a>
+      <a href="#" id="changeBackendUrlBtn">⚙️ Configure Cloud Node URL</a>
     </div>
   </div>
 </div>

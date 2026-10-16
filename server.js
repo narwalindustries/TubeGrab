@@ -471,15 +471,18 @@ app.get('/api/info', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---------- RAM video stream cache with HTTP Range support ----------
+// ---------- RAM video stream cache with HTTP Range support & memory safety ----------
 const ramStreamCache = new Map();
-const MAX_RAM_STREAMS = 12;
-const RAM_STREAM_TTL = 60 * 60 * 1000;
+const MAX_RAM_STREAMS = 6;
+const MAX_RAM_BYTES = 120 * 1024 * 1024; // 120MB maximum RAM buffer cache to prevent crashes on limited memory
+const RAM_STREAM_TTL = 30 * 60 * 1000;
+let currentRamBytes = 0;
 
 function getCachedRamStream(key) {
   const item = ramStreamCache.get(key);
   if (!item) return null;
   if (Date.now() - item.time > RAM_STREAM_TTL) {
+    if (item.buffer) currentRamBytes -= item.buffer.length;
     ramStreamCache.delete(key);
     return null;
   }
@@ -489,7 +492,7 @@ function getCachedRamStream(key) {
 
 function saveRamStream(key, buffer) {
   if (!buffer || buffer.length < 50000) return;
-  if (ramStreamCache.size >= MAX_RAM_STREAMS) {
+  while (ramStreamCache.size >= MAX_RAM_STREAMS || (currentRamBytes + buffer.length > MAX_RAM_BYTES && ramStreamCache.size > 0)) {
     let oldestKey = null, oldestTime = Infinity;
     for (const [k, v] of ramStreamCache.entries()) {
       if (v.time < oldestTime) {
@@ -497,8 +500,13 @@ function saveRamStream(key, buffer) {
         oldestKey = k;
       }
     }
-    if (oldestKey) ramStreamCache.delete(oldestKey);
+    if (oldestKey) {
+      const evicted = ramStreamCache.get(oldestKey);
+      if (evicted && evicted.buffer) currentRamBytes -= evicted.buffer.length;
+      ramStreamCache.delete(oldestKey);
+    } else break;
   }
+  currentRamBytes += buffer.length;
   ramStreamCache.set(key, { buffer, time: Date.now() });
 }
 
@@ -916,8 +924,103 @@ app.get('/api/stream/:id', async (req, res) => {
   });
 });
 
-// ---------- download jobs ----------
+// ---------- download jobs & fair-usage round-robin queue ----------
 const jobs = new Map();
+const downloadQueue = []; // FIFO array of queued job IDs
+let rrClientIndex = 0;    // Pointer for round-robin client scheduling
+
+const MAX_GLOBAL_JOBS = parseInt(process.env.MAX_JOBS || '3', 10);
+const MAX_ACTIVE_PER_CLIENT = 2; // User can run maximum 2 downloads concurrently
+const MAX_TOTAL_PER_CLIENT = 3;  // User can have maximum 3 downloads in progress (active + queued)
+const MAX_WAITING_QUEUE = 60;    // Backpressure limit to prevent memory issues under traffic spikes
+
+function getClientKey(req) {
+  const clientHeader = req.headers['x-client-id'];
+  if (clientHeader && typeof clientHeader === 'string' && clientHeader.trim().length >= 4) {
+    return clientHeader.trim().slice(0, 64);
+  }
+  const forwarded = req.headers['x-forwarded-for'];
+  if (forwarded) return forwarded.split(',')[0].trim();
+  return req.socket?.remoteAddress || req.ip || '127.0.0.1';
+}
+
+function getClientJobCounts(clientKey) {
+  let active = 0;
+  let queued = 0;
+  for (const j of jobs.values()) {
+    if (j.clientKey === clientKey) {
+      if (j.status === 'running') active++;
+      else if (j.status === 'queued') queued++;
+    }
+  }
+  return { active, queued, total: active + queued };
+}
+
+function countRunningJobs() {
+  let count = 0;
+  for (const j of jobs.values()) {
+    if (j.status === 'running') count++;
+  }
+  return count;
+}
+
+function updateQueuePositions() {
+  for (let i = 0; i < downloadQueue.length; i++) {
+    const j = jobs.get(downloadQueue[i]);
+    if (j && j.status === 'queued') {
+      j.queuePosition = i + 1;
+      j.stage = `In queue (#${i + 1} in line)`;
+    }
+  }
+}
+
+function dispatchNextQueuedJob() {
+  while (countRunningJobs() < MAX_GLOBAL_JOBS && downloadQueue.length > 0) {
+    // Collect distinct clients with jobs in queue
+    const clientsInQueue = [];
+    for (const id of downloadQueue) {
+      const j = jobs.get(id);
+      if (j && j.status === 'queued' && !clientsInQueue.includes(j.clientKey)) {
+        clientsInQueue.push(j.clientKey);
+      }
+    }
+    if (!clientsInQueue.length) {
+      downloadQueue.length = 0;
+      break;
+    }
+
+    // Round-Robin selection: find next eligible client with active < MAX_ACTIVE_PER_CLIENT
+    let selectedJobId = null;
+    const numClients = clientsInQueue.length;
+    for (let i = 0; i < numClients; i++) {
+      const client = clientsInQueue[(rrClientIndex + i) % numClients];
+      const counts = getClientJobCounts(client);
+      if (counts.active < MAX_ACTIVE_PER_CLIENT) {
+        const idx = downloadQueue.findIndex(id => {
+          const j = jobs.get(id);
+          return j && j.clientKey === client && j.status === 'queued';
+        });
+        if (idx !== -1) {
+          selectedJobId = downloadQueue.splice(idx, 1)[0];
+          rrClientIndex = (rrClientIndex + i + 1) % numClients;
+          break;
+        }
+      }
+    }
+
+    // If all waiting clients are already using their MAX_ACTIVE_PER_CLIENT limit, stop
+    if (!selectedJobId) break;
+
+    const jobToStart = jobs.get(selectedJobId);
+    if (jobToStart && jobToStart.status === 'queued') {
+      jobToStart.status = 'running';
+      jobToStart.queuePosition = 0;
+      startDownloadAttempt(selectedJobId, jobToStart);
+    }
+  }
+  updateQueuePositions();
+}
+
 const DOWNLOAD_RETRY_ARGS = [
   '--continue',
   '--retries', '10',
@@ -986,6 +1089,7 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
       job.stage = 'Completed';
       job.file = targetFile;
       job.completed = Date.now();
+      dispatchNextQueuedJob();
       return;
     }
 
@@ -1004,6 +1108,7 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
     job.stage = 'Failed';
     job.error = message;
     job.completed = Date.now();
+    dispatchNextQueuedJob();
   };
 
   const pArgs = [
@@ -1037,61 +1142,117 @@ function startDownloadAttempt(jobId, job, attempt = 1) {
   p.on('close', code => finishAttempt(code));
 }
 
-function createDownloadJob({ videoId, kind, quality, args, title, dir }) {
-  const jobId = crypto.randomUUID();
-  const jobDir = dir || path.join(TMP, jobId);
-  fs.mkdirSync(jobDir, { recursive: true });
-  const job = {
-    status: 'running',
-    progress: 0,
-    stage: 'Starting',
-    dir: jobDir,
-    created: Date.now(),
-    title: String(title || '').slice(0, 300),
-    videoId,
-    kind,
-    quality: String(quality),
-    args,
-  };
-  jobs.set(jobId, job);
-  startDownloadAttempt(jobId, job);
-  return jobId;
-}
-
 app.post('/api/jobs', (req, res) => {
   const { id, kind, q, title } = req.body || {};
   if (!ID_RE.test(id || '')) return res.status(400).json({ error: 'Invalid video ID.' });
   const args = getDownloadArgs(kind, q);
   if (!args) return res.status(400).json({ error: 'Invalid download format.' });
-  if ([...jobs.values()].filter(j => j.status === 'running').length >= MAX_JOBS)
-    return res.status(429).json({ error: 'The server is busy. Try again in a moment.' });
 
-  res.json({ jobId: createDownloadJob({ videoId: id, kind, quality: q, args, title }) });
+  const clientKey = getClientKey(req);
+  const clientCounts = getClientJobCounts(clientKey);
+
+  // Maximum 3 total downloads in progress per user (active + queued)
+  if (clientCounts.total >= MAX_TOTAL_PER_CLIENT) {
+    return res.status(429).json({
+      error: 'Fair-usage limit reached: You have 3 downloads in progress (maximum 2 active simultaneously). Please wait for an active download to complete.'
+    });
+  }
+
+  // Global queue limit under extreme traffic spikes
+  if (downloadQueue.length >= MAX_WAITING_QUEUE) {
+    return res.status(429).json({
+      error: 'Cloud processing nodes are currently at peak capacity. Please try again in a few moments.'
+    });
+  }
+
+  const jobId = crypto.randomUUID();
+  const jobDir = path.join(TMP, jobId);
+  fs.mkdirSync(jobDir, { recursive: true });
+
+  const canStartImmediately = (clientCounts.active < MAX_ACTIVE_PER_CLIENT) &&
+                              (countRunningJobs() < MAX_GLOBAL_JOBS) &&
+                              (downloadQueue.length === 0);
+
+  const job = {
+    id: jobId,
+    clientKey,
+    status: canStartImmediately ? 'running' : 'queued',
+    progress: 0,
+    stage: canStartImmediately ? 'Starting' : 'In queue (waiting for slot)',
+    dir: jobDir,
+    created: Date.now(),
+    title: String(title || '').slice(0, 300),
+    videoId: id,
+    kind,
+    quality: String(q),
+    args,
+    queuePosition: 0,
+  };
+
+  jobs.set(jobId, job);
+
+  if (canStartImmediately) {
+    startDownloadAttempt(jobId, job);
+  } else {
+    downloadQueue.push(jobId);
+    updateQueuePositions();
+  }
+
+  res.json({
+    jobId,
+    status: job.status,
+    queuePosition: job.queuePosition || 0,
+    message: job.status === 'queued'
+      ? `Download safely placed in queue (#${job.queuePosition}). It will start automatically when an active slot becomes free.`
+      : 'Download started.'
+  });
 });
 
 app.post('/api/jobs/:id/retry', (req, res) => {
   const job = jobs.get(req.params.id);
   if (!job) return res.status(404).json({ error: 'Download not found.' });
   if (job.status !== 'error') return res.status(409).json({ error: 'Only failed downloads can be retried.' });
-  if ([...jobs.values()].filter(j => j.status === 'running').length >= MAX_JOBS)
-    return res.status(429).json({ error: 'The server is busy. Try again in a moment.' });
-  job.status = 'running';
+
+  const clientKey = getClientKey(req);
+  job.clientKey = clientKey;
+  const clientCounts = getClientJobCounts(clientKey);
+
   job.error = undefined;
   job.progress = 0;
   job.retryIn = 0;
   job.completed = undefined;
-  startDownloadAttempt(req.params.id, job);
-  res.json({ jobId: req.params.id });
+
+  const canStart = (clientCounts.active < MAX_ACTIVE_PER_CLIENT) && (countRunningJobs() < MAX_GLOBAL_JOBS);
+  if (canStart) {
+    job.status = 'running';
+    job.queuePosition = 0;
+    startDownloadAttempt(req.params.id, job);
+  } else {
+    job.status = 'queued';
+    if (!downloadQueue.includes(req.params.id)) downloadQueue.push(req.params.id);
+    updateQueuePositions();
+  }
+
+  res.json({ jobId: req.params.id, status: job.status });
 });
 
 app.get('/api/jobs/:id', (req, res) => {
   const j = jobs.get(req.params.id);
   if (!j) return res.status(404).json({ error: 'not found' });
-  res.json({ status: j.status, progress: j.progress, stage: j.stage, error: j.error, filename: j.file });
+  res.json({
+    status: j.status,
+    progress: j.progress,
+    stage: j.stage,
+    queuePosition: j.queuePosition || 0,
+    error: j.error,
+    filename: j.file
+  });
 });
 
-app.get('/api/jobs', (_req, res) => {
+app.get('/api/jobs', (req, res) => {
+  const clientKey = getClientKey(req);
   const results = [...jobs.entries()]
+    .filter(([_, job]) => !job.clientKey || job.clientKey === clientKey || req.query.all === '1')
     .map(([id, job]) => ({
       id,
       title: job.title,
@@ -1100,6 +1261,7 @@ app.get('/api/jobs', (_req, res) => {
       status: job.status,
       progress: job.progress,
       stage: job.stage,
+      queuePosition: job.queuePosition || 0,
       error: job.error,
       lastError: job.lastError,
       filename: job.file,
@@ -1113,7 +1275,7 @@ app.get('/api/jobs', (_req, res) => {
 
 app.post('/api/jobs/clear', (_req, res) => {
   for (const [id, j] of jobs) {
-    if (j.status !== 'running') {
+    if (j.status !== 'running' && j.status !== 'queued') {
       rmDir(j.dir);
       jobs.delete(id);
     }
@@ -1123,7 +1285,7 @@ app.post('/api/jobs/clear', (_req, res) => {
 
 app.delete('/api/jobs', (_req, res) => {
   for (const [id, j] of jobs) {
-    if (j.status !== 'running') {
+    if (j.status !== 'running' && j.status !== 'queued') {
       rmDir(j.dir);
       jobs.delete(id);
     }
@@ -1134,13 +1296,22 @@ app.delete('/api/jobs', (_req, res) => {
 app.delete('/api/jobs/:id', (req, res) => {
   const j = jobs.get(req.params.id);
   if (!j) return res.status(404).json({ error: 'not found' });
+
+  const qIdx = downloadQueue.indexOf(req.params.id);
+  if (qIdx !== -1) {
+    downloadQueue.splice(qIdx, 1);
+  }
+
   if (j.status === 'running') {
     if (j.process && !j.process.killed) {
       try { j.process.kill(); } catch (_) {}
     }
   }
+
   rmDir(j.dir);
   jobs.delete(req.params.id);
+  dispatchNextQueuedJob();
+
   res.json({ ok: true });
 });
 
@@ -1180,5 +1351,12 @@ setInterval(() => {
     }
   }
 }, 5 * 60e3);
+
+app.use((err, _req, res, _next) => {
+  console.error('[Server Error]', err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: 'Processing temporarily unavailable. Please try again.' });
+  }
+});
 
 app.listen(PORT, () => console.log(`TubeGrab running → http://localhost:${PORT}`));
