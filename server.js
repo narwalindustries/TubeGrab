@@ -634,6 +634,38 @@ const cached = async (key, ttlMs, fn) => {
 };
 
 // ---------- search / home feed ----------
+let homeFeedPool = [];
+let homeFeedTime = 0;
+const HOME_CACHE_TTL = 15 * 60 * 1000;
+
+async function getHomeFeedVideos(seedNumber = 0) {
+  if (homeFeedPool.length >= 24 && Date.now() - homeFeedTime < HOME_CACHE_TTL) {
+    return homeFeedPool;
+  }
+  try {
+    const numCats = VAST_HOME_CATEGORIES.length;
+    const catIdx = seedNumber % numCats;
+    const list = VAST_HOME_CATEGORIES[catIdx] || VAST_HOME_CATEGORIES[0];
+    const query = list[Math.floor(Math.random() * list.length)] || 'trending hindi punjabi music songs';
+    const d = await runJson(['--flat-playlist', '-J', `ytsearch60:${query}`], false);
+    const raw = (d.entries || []).filter(e => e && ID_RE.test(e.id) && !MIX_TITLE_RE.test(e.title || ''));
+    if (raw.length > 0) {
+      homeFeedPool = raw.map(item => ({
+        id: item.id,
+        title: item.title,
+        channel: item.channel || item.uploader,
+        duration: item.duration,
+        views: item.view_count,
+        thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+      }));
+      homeFeedTime = Date.now();
+    }
+  } catch (err) {
+    console.warn('[HomeFeed] Error fetching:', err.message);
+  }
+  return homeFeedPool;
+}
+
 app.get('/api/search', async (req, res) => {
   const requestedQuery = String(req.query.q || '').slice(0, 200).trim();
   const isHomeFeed = !requestedQuery;
@@ -646,52 +678,18 @@ app.get('/api/search', async (req, res) => {
   if (!Number.isInteger(page) || page < 0 || page >= MAX_SEARCH_PAGES)
     return res.status(400).json({ error: 'bad page' });
   const end = (page + 1) * SEARCH_PAGE_SIZE;
-  const excludeKey = isHomeFeed
-    ? crypto.createHash('sha1').update([...excludedIds].sort().join(',')).digest('hex').slice(0, 10)
-    : '';
-  const cacheKey = `s:${isHomeFeed ? `home:${feedSeed}:${excludeKey}` : requestedQuery}:${end}`;
+
   try {
+    if (isHomeFeed) {
+      const pool = await getHomeFeedVideos(seedNumber);
+      const filtered = pool.filter(v => !excludedIds.has(v.id));
+      const results = filtered.slice(page * SEARCH_PAGE_SIZE, end);
+      return res.json({ results, hasMore: filtered.length > end && page + 1 < MAX_SEARCH_PAGES });
+    }
+
+    // User Search Query: YouTube-style ranking
+    const cacheKey = `s:${requestedQuery}:${end}`;
     const entries = await cached(cacheKey, 5 * 60e3, async () => {
-      if (isHomeFeed) {
-        // Multi-Genre, Multi-Language Diverse Home Feed
-        const numCats = VAST_HOME_CATEGORIES.length;
-        const catPromises = [];
-        for (let i = 0; i < 4; i++) {
-          const catIdx = (seedNumber + i) % numCats;
-          const list = VAST_HOME_CATEGORIES[catIdx];
-          const query = list[(seedNumber + i) % list.length];
-          catPromises.push(
-            runJson(['--flat-playlist', '-J', `ytsearch22:${query}`], false)
-              .then(d => (d.entries || []).filter(e => e && ID_RE.test(e.id)))
-              .catch(() => [])
-          );
-        }
-
-        const catResults = await Promise.all(catPromises);
-        const interleaved = [];
-        const seen = new Set(excludedIds);
-        const maxPerCat = Math.max(...catResults.map(r => r.length), 0);
-
-        for (let step = 0; step < maxPerCat; step++) {
-          for (let c = 0; c < catResults.length; c++) {
-            const item = catResults[c][step];
-            if (item && !seen.has(item.id) && !MIX_TITLE_RE.test(item.title || '') && (!item.duration || item.duration <= 25 * 60)) {
-              seen.add(item.id);
-              interleaved.push({
-                id: item.id,
-                title: item.title,
-                channel: item.channel || item.uploader,
-                duration: item.duration,
-                views: item.view_count,
-                thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-              });
-            }
-          }
-        }
-        return interleaved;
-      }
-
-      // User Search Query: YouTube-style ranking (Song first in top 10, then mixed)
       const count = Math.min(100, Math.max(40, end + 10));
       const d = await runJson(['--flat-playlist', '-J', `ytsearch${count}:${requestedQuery}`], false);
       const rawEntries = (d.entries || []).filter(e => e && ID_RE.test(e.id));
@@ -708,7 +706,9 @@ app.get('/api/search', async (req, res) => {
     });
     const results = entries.slice(page * SEARCH_PAGE_SIZE, end);
     res.json({ results, hasMore: entries.length > end && page + 1 < MAX_SEARCH_PAGES });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ---------- available formats for one video ----------
