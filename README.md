@@ -12,9 +12,9 @@
 | 📱 **Android App** | Native APK | [![Download APK](https://img.shields.io/badge/Android-Download_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab.apk) |
 | 💻 **Windows App** | Desktop Bundle | [![Download Windows](https://img.shields.io/badge/Windows-Download_Desktop-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/narwalindustries/TubeGrab/archive/refs/heads/main.zip) |
 
-* 🌐 **Firebase Website**: Instant access in any browser. If the backend is sleeping, simply tap **"Connect & Wake Up Server"** to activate the eco-friendly cloud engine.
+* 🌐 **Firebase Website**: Instant access in any browser. If the backend is on standby, simply tap **"Connect & Initialize Engine"** to activate the cloud engine.
 * 📱 **Android APK**: Native YouTube-style mobile UI with background downloading straight to your phone's `Download/` folder.
-* 💻 **Windows Desktop**: Unzip and double-click **`TubeGrab.vbs`** for an instant, silent launch with zero server dependencies.
+* 💻 **Windows Desktop**: Launch via `npm run desktop` for an instant native window with zero server dependencies.
 
 ---
 
@@ -24,8 +24,8 @@
 TubeGrab/
 ├── server/       # 🐧 Linux Cloud Backend (Render Dockerfile, render.yaml, yt-dlp & FFmpeg)
 ├── android/      # 📱 Android Native App (AndroidManifest.xml, MainActivity.java, Gradle)
-├── desktop/      # 🪟 Windows Desktop App (TubeGrab.vbs, TubeGrab.bat, main.js)
-├── public/       # 🌐 Frontend Web UI (Firebase Hosting ready with Server Wakeup Modal)
+├── desktop/      # 🪟 Windows Desktop App (main.js)
+├── public/       # 🌐 Frontend Web UI (Firebase Hosting ready)
 ├── firebase.json # ⚡ Firebase Hosting configuration
 └── server.js     # 🚀 Express API engine with CORS & universal OS support
 ```
@@ -84,22 +84,15 @@ Ensure you have the following installed:
    ```
 
 3. **Launch as Desktop App (Native Window):**
-   - Simply double-click **`TubeGrab.vbs`** (silent launch) or **`TubeGrab.bat`**.
-   - Or run via terminal:
-     ```bash
-     npm run desktop
-     ```
+   ```bash
+   npm run desktop
+   ```
 
 4. **Or Run as Web Server:**
    ```bash
    npm start
    ```
    Navigate to `http://localhost:3000` in your browser.
-
-   Or use the automated Python launcher with self-updating dependencies:
-   ```bash
-   python run.py
-   ```
 
 ### Docker Support
 

@@ -4,16 +4,10 @@ TubeGrab runs as a native Windows Desktop application with 0 cloud dependencies,
 
 ## 🚀 Quick Launch (Windows)
 
-1. **Silent Launch (Recommended)**:
-   Double-click `TubeGrab.vbs`. It starts TubeGrab instantly in a sleek native window without showing any black CMD terminal.
-
-2. **Standard Launch**:
-   Double-click `TubeGrab.bat`.
-
-3. **Terminal**:
-   ```bash
-   npm run desktop
-   ```
+Launch directly from terminal or IDE:
+```bash
+npm run desktop
+```
 
 ## 🛠️ Requirements
 - Windows 10/11

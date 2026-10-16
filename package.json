@@ -8,7 +8,6 @@
     "start": "node server.js",
     "app": "electron .",
     "desktop": "electron .",
-    "install:shortcut": "cscript //nologo tools/create-shortcut.vbs",
     "encrypt": "node tools/encrypt-config.js"
   },
   "dependencies": {
