@@ -24,10 +24,16 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"></circle><path d="m16 16 5 5"></path></svg>
     </button>
   </form>
-  <button id="downloadsButton" type="button" aria-label="Open downloads" title="Downloads">
-    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>
-    <span>Downloads</span>
-  </button>
+  <div class="header-actions">
+    <button id="getAppButton" class="header-btn app-highlight-btn" type="button" aria-label="Get TubeGrab App" title="Get Android & Windows App">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.59L8.71 12.3a1 1 0 1 1 1.41-1.41L11 11.77V7a1 1 0 0 1 2 0v4.77l.88-.88a1 1 0 0 1 1.41 1.41z"/></svg>
+      <span>Get App</span>
+    </button>
+    <button id="downloadsButton" class="header-btn" type="button" aria-label="Open downloads" title="Downloads">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>
+      <span>Downloads</span>
+    </button>
+  </div>
 </header>
 <main>
   <div class="feed-heading">
@@ -39,8 +45,50 @@
   <div id="loadMore" aria-hidden="true"></div>
 </main>
 <footer class="app-footer">
+  <div class="footer-app-badges">
+    <a href="https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab.apk" class="footer-app-btn" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-1.0001s.4482-.9993.9993-.9993c.551 0 .9993.4479.9993.9993 0 .5515-.4483 1.0001-.9993 1.0001m-11.046 0c-.5511 0-.9993-.4486-.9993-1.0001s.4482-.9993.9993-.9993c.5511 0 .9993.4479.9993.9993 0 .5515-.4482 1.0001-.9993 1.0001m11.4045-6.02l1.9973-3.4592a.416.416 0 00-.1521-.5676.416.416 0 00-.5676.1521l-2.0223 3.503C15.5896 8.4239 13.8566 8.001 12 8.001s-3.5896.4229-5.1378.9487L4.84 5.4467a.416.416 0 00-.5676-.1521.4157.4157 0 00-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3432-4.1021-2.6889-7.5743-6.1185-9.4396"/></svg>
+      <span>Android APK</span>
+    </a>
+    <a href="https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab-setup.exe" class="footer-app-btn" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.551H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.949-1.801"/></svg>
+      <span>Windows App (.exe)</span>
+    </a>
+  </div>
   <p>© 2026 <strong>Narwal Software Solutions</strong>. All rights reserved.</p>
 </footer>
+
+<div class="overlay" id="appDownloadModal" hidden>
+  <div class="app-modal" role="dialog" aria-modal="true" aria-labelledby="appModalTitle">
+    <div class="app-modal-header">
+      <h2 id="appModalTitle">Get TubeGrab App</h2>
+      <button class="close" type="button" data-close aria-label="Close modal">✕</button>
+    </div>
+    <p class="app-modal-desc">Download TubeGrab natively on your phone or PC for an instant ad-free YouTube experience.</p>
+    <div class="app-cards-grid">
+      <a href="https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab.apk" class="app-card" target="_blank" rel="noopener">
+        <div class="app-card-icon android-icon">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M17.523 15.3414c-.5511 0-.9993-.4486-.9993-1.0001s.4482-.9993.9993-.9993c.551 0 .9993.4479.9993.9993 0 .5515-.4483 1.0001-.9993 1.0001m-11.046 0c-.5511 0-.9993-.4486-.9993-1.0001s.4482-.9993.9993-.9993c.5511 0 .9993.4479.9993.9993 0 .5515-.4482 1.0001-.9993 1.0001m11.4045-6.02l1.9973-3.4592a.416.416 0 00-.1521-.5676.416.416 0 00-.5676.1521l-2.0223 3.503C15.5896 8.4239 13.8566 8.001 12 8.001s-3.5896.4229-5.1378.9487L4.84 5.4467a.416.416 0 00-.5676-.1521.4157.4157 0 00-.1521.5676l1.9973 3.4592C2.6889 11.1867.3432 14.6589 0 18.761h24c-.3432-4.1021-2.6889-7.5743-6.1185-9.4396"/></svg>
+        </div>
+        <div class="app-card-content">
+          <h3>Android App (.APK)</h3>
+          <p>YouTube mobile UI, background download notifications, save to phone Downloads folder.</p>
+          <span class="app-download-tag">Download APK ➔</span>
+        </div>
+      </a>
+      <a href="https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab-setup.exe" class="app-card" target="_blank" rel="noopener">
+        <div class="app-card-icon win-icon">
+          <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.551H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.949-1.801"/></svg>
+        </div>
+        <div class="app-card-content">
+          <h3>Windows Desktop (.EXE)</h3>
+          <p>Native PC application, fast downloads directly to your PC Downloads folder.</p>
+          <span class="app-download-tag">Download Setup.exe ➔</span>
+        </div>
+      </a>
+    </div>
+  </div>
+</div>
 
 <div class="overlay" id="downloadsModal" hidden>
   <section class="downloads-screen" role="dialog" aria-modal="true" aria-labelledby="downloadsHeading">
@@ -165,10 +213,6 @@
       <div class="server-spinner"></div>
       <p id="serverLoadingText">Connecting to cloud node… (Allocating dedicated processing pipeline)</p>
       <div class="server-progress-bar"><div class="server-progress-fill"></div></div>
-    </div>
-
-    <div class="server-footer-note">
-      <a href="#" id="changeBackendUrlBtn">⚙️ Configure Cloud Node URL</a>
     </div>
   </div>
 </div>

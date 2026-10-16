@@ -87,8 +87,6 @@ function isLocalEnvironment() {
 
 function getApiBase() {
   if (isLocalEnvironment()) return '';
-  const saved = localStorage.getItem('tubegrab_backend_url');
-  if (saved) return saved.replace(/\/+$/, '');
   const encConfig = getDecryptedConfig();
   if (encConfig.url) return encConfig.url.replace(/\/+$/, '');
   return window.CONFIG_BACKEND_URL || DEFAULT_BACKEND_URL;
@@ -96,12 +94,11 @@ function getApiBase() {
 
 function getApiKey() {
   if (isLocalEnvironment()) return '';
-  const saved = localStorage.getItem('tubegrab_api_key');
-  if (saved) return saved.trim();
   const encConfig = getDecryptedConfig();
   if (encConfig.key) return encConfig.key.trim();
   return window.CONFIG_API_KEY || '';
 }
+try { localStorage.removeItem('tubegrab_backend_url'); } catch (_) {}
 
 function resolveUrl(url) {
   if (!url || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) return url;
@@ -1026,7 +1023,7 @@ $('#searchForm').addEventListener('submit', e => {
 });
 const dl = new URLSearchParams(location.search).get('dl');
 
-async function checkServerHealth(timeoutMs = 2500) {
+async function checkServerHealth(timeoutMs = 4500) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1046,57 +1043,57 @@ function showWakeupModal() {
   const loadingArea = $('#serverLoadingArea');
   const statusDot = $('#serverPulseDot');
   const statusText = $('#serverStatusText');
-  const cfgBtn = $('#changeBackendUrlBtn');
-
-  if (cfgBtn) {
-    cfgBtn.onclick = (e) => {
-      e.preventDefault();
-      const current = getApiBase() || DEFAULT_BACKEND_URL;
-      const input = prompt('Enter Cloud Backend Server URL:', current);
-      if (input && input.trim()) {
-        localStorage.setItem('tubegrab_backend_url', input.trim().replace(/\/+$/, ''));
-        location.reload();
-      }
-    };
-  }
 
   if (wakeBtn) {
     wakeBtn.onclick = async () => {
       wakeBtn.disabled = true;
       wakeBtn.style.opacity = '0.5';
       loadingArea.hidden = false;
-      statusText.textContent = 'Status: Connecting to cloud node…';
+      statusText.textContent = 'Status: Initializing cloud processing node…';
 
-      // Trigger wake request
-      fetch(resolveUrl('/health')).catch(() => {});
+      // Send wake request immediately
+      fetch(resolveUrl('/health'), { cache: 'no-store' }).catch(() => {});
 
       let attempts = 0;
-      const pollTimer = setInterval(async () => {
+      let connected = false;
+
+      const checkNow = async () => {
+        if (connected) return;
         attempts++;
-        const isUp = await checkServerHealth(2000);
-        if (isUp) {
+        const isUp = await checkServerHealth(5000);
+        if (isUp && !connected) {
+          connected = true;
           clearInterval(pollTimer);
           if (statusDot) statusDot.classList.add('online');
-          statusText.textContent = 'Status: Connected! Loading app…';
+          statusText.textContent = 'Status: Connected! Initializing app…';
           const lbl = $('#serverLoadingText');
-          if (lbl) lbl.textContent = '✓ Cloud node connected!';
+          if (lbl) lbl.textContent = '✓ Cloud engine ready!';
           setTimeout(() => {
             modal.hidden = true;
             loadResults(true);
             refreshDownloads();
             if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
-          }, 700);
-        } else if (attempts > 30) {
+          }, 400);
+        } else if (attempts >= 25) {
           clearInterval(pollTimer);
           wakeBtn.disabled = false;
           wakeBtn.style.opacity = '1';
           loadingArea.hidden = true;
-          statusText.textContent = 'Status: Taking longer than usual. Click again to retry.';
+          statusText.textContent = 'Status: Cloud node is taking longer than usual. Click to retry.';
         }
-      }, 3000);
+      };
+
+      const pollTimer = setInterval(checkNow, 2000);
+      checkNow();
     };
   }
 }
+
+// Wire Get App button
+$('#getAppButton')?.addEventListener('click', () => {
+  const appModal = $('#appDownloadModal');
+  if (appModal) appModal.hidden = false;
+});
 
 async function boot() {
   // If running locally (Windows Desktop app or localhost), boot directly with 0 delays
@@ -1108,14 +1105,17 @@ async function boot() {
   }
 
   // Running remotely (Firebase Hosting or Android App)
-  statusEl.textContent = 'Checking server status…';
-  const isUp = await checkServerHealth(2000);
+  statusEl.textContent = 'Connecting…';
+  const isUp = await checkServerHealth(4000);
   if (isUp) {
+    // Server is ALREADY running: Load immediately! NEVER show the modal!
+    statusEl.textContent = '';
     loadResults(true);
     refreshDownloads();
     if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
   } else {
-    statusEl.textContent = 'Cloud processing node is in standby. Click "Connect & Initialize Engine" above.';
+    // Only show modal if server is in sleep mode / cold standby
+    statusEl.textContent = 'Cloud server is in standby. Click "Connect & Initialize Engine" above.';
     showWakeupModal();
   }
 }
