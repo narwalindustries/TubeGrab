@@ -1,0 +1,18 @@
+{
+  "name": "TubeGrab - YouTube Video & Audio Downloader",
+  "short_name": "TubeGrab",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f0f0f",
+  "theme_color": "#0f0f0f",
+  "description": "Watch, stream, and download YouTube videos in all resolutions and MP3 audio.",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 20'><rect width='28' height='20' rx='5' fill='%23f00'/><path d='M11 5.5v9l8-4.5z' fill='%23fff'/></svg>",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

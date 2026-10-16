@@ -4,13 +4,31 @@
 
 ---
 
-## 📥 Downloads & Quick Launch
+## 📥 Launch & Download (All Platforms)
 
-[![Windows Desktop App](https://img.shields.io/badge/Windows-Download%20Desktop%20App-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/narwalindustries/TubeGrab/archive/refs/heads/main.zip)
-[![GitHub Releases](https://img.shields.io/badge/Releases-Latest%20Version-238636?style=for-the-badge&logo=github&logoColor=white)](https://github.com/narwalindustries/TubeGrab/releases)
+| Platform | Type | Link / Action |
+|---|---|---|
+| 🌐 **Live Web App** | Firebase Hosting | [![Open Web App](https://img.shields.io/badge/Firebase_Web-Launch_TubeGrab-FFA611?style=for-the-badge&logo=firebase&logoColor=black)](https://tubegrab-narwal.web.app) |
+| 📱 **Android App** | Native APK | [![Download APK](https://img.shields.io/badge/Android-Download_APK-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/narwalindustries/TubeGrab/releases/latest/download/tubegrab.apk) |
+| 💻 **Windows App** | Desktop Bundle | [![Download Windows](https://img.shields.io/badge/Windows-Download_Desktop-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/narwalindustries/TubeGrab/archive/refs/heads/main.zip) |
 
-* 🪟 **Windows Desktop**: Click the blue button above to download, unzip, and double-click **`TubeGrab.vbs`** for an instant, silent desktop launch.
-* 📱 **Android Usage**: A standalone offline Android APK is not feasible without a backend cloud server (as phones lack native Node.js, Python, and FFmpeg environments). However, you can seamlessly open TubeGrab on your Android phone's browser by connecting to your PC's Wi-Fi IP (e.g., `http://192.168.x.x:3000`).
+* 🌐 **Firebase Website**: Instant access in any browser. If the backend is sleeping, simply tap **"Connect & Wake Up Server"** to activate the eco-friendly cloud engine.
+* 📱 **Android APK**: Native YouTube-style mobile UI with background downloading straight to your phone's `Download/` folder.
+* 💻 **Windows Desktop**: Unzip and double-click **`TubeGrab.vbs`** for an instant, silent launch with zero server dependencies.
+
+---
+
+## 📁 Repository Structure
+
+```
+TubeGrab/
+├── server/       # 🐧 Linux Cloud Backend (Render Dockerfile, render.yaml, yt-dlp & FFmpeg)
+├── android/      # 📱 Android Native App (AndroidManifest.xml, MainActivity.java, Gradle)
+├── desktop/      # 🪟 Windows Desktop App (TubeGrab.vbs, TubeGrab.bat, main.js)
+├── public/       # 🌐 Frontend Web UI (Firebase Hosting ready with Server Wakeup Modal)
+├── firebase.json # ⚡ Firebase Hosting configuration
+└── server.js     # 🚀 Express API engine with CORS & universal OS support
+```
 
 
 ## ✨ Key Features

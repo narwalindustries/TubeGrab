@@ -1,5 +1,6 @@
 FROM node:20-slim
 
+# Install Linux system dependencies: Python3, FFmpeg, curl, certificates
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     ffmpeg \
@@ -9,20 +10,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && chmod +x /usr/local/bin/yt-dlp \
  && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -m -u 1000 user
-USER user
-ENV HOME=/home/user \
-    PATH=/home/user/.local/bin:$PATH \
-    PORT=7860
+WORKDIR /app
 
-WORKDIR $HOME/app
-
-COPY --chown=user package*.json ./
+COPY package*.json ./
 RUN npm install --omit=dev
 
-COPY --chown=user . .
+COPY . .
 
-EXPOSE 7860
+# Render & Cloud environments set PORT dynamically
+ENV PORT=10000
+EXPOSE 10000
 
 CMD ["node", "server.js"]
-

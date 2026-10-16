@@ -7,6 +7,10 @@
 <meta name="description" content="TubeGrab is the best free YouTube video and audio downloader. Watch, play, and download YouTube videos in all qualities without any login. Fast, simple, and up-to-date.">
 <meta name="keywords" content="TubeGrab, YouTube downloader, download YouTube videos, YouTube to MP3, YouTube to MP4, free video downloader, no login YouTube downloader, watch and download YouTube">
 <title>TubeGrab - Free YouTube Video & Audio Downloader</title>
+<meta name="theme-color" content="#0f0f0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -130,7 +134,41 @@
     <h2 id="dTitle">Download</h2>
     <div id="dBody"></div>
   </div>
+<div class="overlay" id="serverWakeupModal" hidden>
+  <div class="server-modal">
+    <div class="server-badge">
+      <span class="leaf-icon">🌱</span>
+      <span>Eco Cloud Engine</span>
+    </div>
+    <h2>Server in Power-Saving Mode</h2>
+    <p class="server-desc">
+      TubeGrab runs on eco-friendly cloud instances that automatically sleep to save compute power. Click below to wake up the engine.
+    </p>
+
+    <div class="server-status-box" id="serverStatusBox">
+      <div class="server-pulse-dot" id="serverPulseDot"></div>
+      <span id="serverStatusText">Status: Standby (Sleeping)</span>
+    </div>
+
+    <button id="wakeServerBtn" class="wake-btn" type="button">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+      </svg>
+      <span>Connect & Wake Up Server</span>
+    </button>
+
+    <div id="serverLoadingArea" class="server-loading-area" hidden>
+      <div class="server-spinner"></div>
+      <p id="serverLoadingText">Waking up cloud engine… (Takes ~30–45s on cold start)</p>
+      <div class="server-progress-bar"><div class="server-progress-fill"></div></div>
+    </div>
+
+    <div class="server-footer-note">
+      <a href="#" id="changeBackendUrlBtn">⚙️ Configure Backend URL</a>
+    </div>
+  </div>
 </div>
+
 <script src="app.js"></script>
 </body>
 </html>

@@ -48,8 +48,28 @@ function rememberHomeVideos(results) {
 
 const downloadButton = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 17v3h16v-3"></path></svg><span>Download</span>';
 
+const DEFAULT_BACKEND_URL = 'https://tubegrab.onrender.com';
+
+function isLocalEnvironment() {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '';
+}
+
+function getApiBase() {
+  if (isLocalEnvironment()) return '';
+  const saved = localStorage.getItem('tubegrab_backend_url');
+  if (saved) return saved.replace(/\/+$/, '');
+  return window.CONFIG_BACKEND_URL || DEFAULT_BACKEND_URL;
+}
+
+function resolveUrl(url) {
+  if (!url || url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) return url;
+  const base = getApiBase();
+  return base ? `${base}${url.startsWith('/') ? '' : '/'}${url}` : url;
+}
+
 async function api(url, opts) {
-  const r = await fetch(url, opts); const d = await r.json().catch(() => ({}));
+  const fullUrl = resolveUrl(url);
+  const r = await fetch(fullUrl, opts); const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || 'Request failed'); return d;
 }
 
@@ -304,7 +324,7 @@ function setVideoSource(id, start = 0, autoplay = true) {
   if (activeDuration) params.set('duration', String(activeDuration));
   if (start) params.set('start', String(start));
   params.set('quality', playerQuality);
-  const nextSrc = `/api/stream/${encodeURIComponent(id)}?${params.toString()}`;
+  const nextSrc = resolveUrl(`/api/stream/${encodeURIComponent(id)}?${params.toString()}`);
   if (video.getAttribute('data-loaded-src') !== nextSrc) {
     video.setAttribute('data-loaded-src', nextSrc);
     video.src = nextSrc;
@@ -448,7 +468,7 @@ $('#playerVideo').addEventListener('playing', () => {
   if (queueIndex < playerQueue.length - 1) {
     const next = playerQueue[queueIndex + 1];
     if (next && next.id) {
-      fetch(`/api/preload/${encodeURIComponent(next.id)}?quality=${encodeURIComponent(playerQuality)}`).catch(() => {});
+      fetch(resolveUrl(`/api/preload/${encodeURIComponent(next.id)}?quality=${encodeURIComponent(playerQuality)}`)).catch(() => {});
     }
   }
 });
@@ -714,7 +734,7 @@ function downloadCompletedFile(job) {
   pendingAutoDownloads.delete(job.id);
   persistPendingAutoDownloads();
   const link = document.createElement('a');
-  link.href = `/api/jobs/${encodeURIComponent(job.id)}/file`;
+  link.href = resolveUrl(`/api/jobs/${encodeURIComponent(job.id)}/file`);
   link.download = job.filename;
   document.body.appendChild(link);
   link.click();
@@ -755,7 +775,7 @@ function renderDownloads(jobs) {
       ? `${esc(job.stage)} · ${Math.round(progress)}%`
       : esc(job.stage || (done ? 'Completed' : 'Starting'));
     const action = done
-      ? `<a class="download-file" href="/api/jobs/${encodeURIComponent(job.id)}/file" download="${esc(job.filename || '')}">Download file</a>`
+      ? `<a class="download-file" href="${resolveUrl(`/api/jobs/${encodeURIComponent(job.id)}/file`)}" download="${esc(job.filename || '')}">Download file</a>`
       : running
         ? ''
         : `<button class="retry-download" type="button" data-retry="${encodeURIComponent(job.id)}">Retry</button>`;
@@ -902,9 +922,7 @@ async function startJob(id, title, kind, q) {
   } catch (e) { prog.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 
-refreshDownloads();
-
-// ---------- boot ----------
+// ---------- boot & server connection ----------
 $('#searchForm').addEventListener('submit', e => {
   e.preventDefault(); const v = $('#q').value.trim(); const id = extractId(v);
   if (id) {
@@ -915,6 +933,100 @@ $('#searchForm').addEventListener('submit', e => {
   }
   else loadResults(true);
 });
-const dl = new URLSearchParams(location.search).get('dl');   // used by the browser extension
-loadResults(true);
-if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
+const dl = new URLSearchParams(location.search).get('dl');
+
+async function checkServerHealth(timeoutMs = 2500) {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const res = await fetch(resolveUrl('/health'), { signal: controller.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    return res.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+function showWakeupModal() {
+  const modal = $('#serverWakeupModal');
+  if (!modal) return;
+  modal.hidden = false;
+  const wakeBtn = $('#wakeServerBtn');
+  const loadingArea = $('#serverLoadingArea');
+  const statusDot = $('#serverPulseDot');
+  const statusText = $('#serverStatusText');
+  const cfgBtn = $('#changeBackendUrlBtn');
+
+  if (cfgBtn) {
+    cfgBtn.onclick = (e) => {
+      e.preventDefault();
+      const current = getApiBase() || DEFAULT_BACKEND_URL;
+      const input = prompt('Enter your Render Backend URL:', current);
+      if (input && input.trim()) {
+        localStorage.setItem('tubegrab_backend_url', input.trim().replace(/\/+$/, ''));
+        location.reload();
+      }
+    };
+  }
+
+  if (wakeBtn) {
+    wakeBtn.onclick = async () => {
+      wakeBtn.disabled = true;
+      wakeBtn.style.opacity = '0.5';
+      loadingArea.hidden = false;
+      statusText.textContent = 'Status: Waking up instance…';
+
+      // Trigger wake request
+      fetch(resolveUrl('/health')).catch(() => {});
+
+      let attempts = 0;
+      const pollTimer = setInterval(async () => {
+        attempts++;
+        const isUp = await checkServerHealth(2000);
+        if (isUp) {
+          clearInterval(pollTimer);
+          if (statusDot) statusDot.classList.add('online');
+          statusText.textContent = 'Status: Connected! Loading app…';
+          const lbl = $('#serverLoadingText');
+          if (lbl) lbl.textContent = '✓ Cloud engine ready!';
+          setTimeout(() => {
+            modal.hidden = true;
+            loadResults(true);
+            refreshDownloads();
+            if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
+          }, 700);
+        } else if (attempts > 30) {
+          clearInterval(pollTimer);
+          wakeBtn.disabled = false;
+          wakeBtn.style.opacity = '1';
+          loadingArea.hidden = true;
+          statusText.textContent = 'Status: Taking longer than usual. Click again to retry.';
+        }
+      }, 3000);
+    };
+  }
+}
+
+async function boot() {
+  // If running locally (Windows Desktop app or localhost), boot directly with 0 delays
+  if (isLocalEnvironment()) {
+    loadResults(true);
+    refreshDownloads();
+    if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
+    return;
+  }
+
+  // Running remotely (Firebase Hosting or Android App)
+  statusEl.textContent = 'Checking server status…';
+  const isUp = await checkServerHealth(2000);
+  if (isUp) {
+    loadResults(true);
+    refreshDownloads();
+    if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
+  } else {
+    statusEl.textContent = 'Cloud server is sleeping. Click "Connect & Wake Up Server" above.';
+    showWakeupModal();
+  }
+}
+
+boot();
