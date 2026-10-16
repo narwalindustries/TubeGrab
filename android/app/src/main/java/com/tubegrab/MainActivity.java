@@ -21,7 +21,7 @@ import android.widget.Toast;
 public class MainActivity extends Activity {
 
     // Default pointing to hosted Firebase/Render instance or bundled assets
-    public static final String DEFAULT_URL = "https://tubegrab.onrender.com";
+    public static final String DEFAULT_URL = "https://tubegrab-narwal.web.app";
 
     private WebView webView;
     private FrameLayout customViewContainer;

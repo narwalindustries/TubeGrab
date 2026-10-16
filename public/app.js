@@ -79,7 +79,7 @@ function getDecryptedConfig() {
   };
 }
 
-const DEFAULT_BACKEND_URL = 'https://tubegrab.onrender.com';
+const DEFAULT_BACKEND_URL = 'https://tubegrab-kb9u.onrender.com';
 
 function isLocalEnvironment() {
   return location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '';
@@ -1023,7 +1023,7 @@ $('#searchForm').addEventListener('submit', e => {
 });
 const dl = new URLSearchParams(location.search).get('dl');
 
-async function checkServerHealth(timeoutMs = 4500) {
+async function checkServerHealth(timeoutMs = 5000) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -1051,40 +1051,37 @@ function showWakeupModal() {
       loadingArea.hidden = false;
       statusText.textContent = 'Status: Initializing cloud processing node…';
 
-      // Send wake request immediately
-      fetch(resolveUrl('/health'), { cache: 'no-store' }).catch(() => {});
+      // Send initial wake request immediately
+      fetch(resolveUrl('/health'), { cache: 'no-store', mode: 'no-cors' }).catch(() => {});
 
-      let attempts = 0;
+      const startTime = Date.now();
+      const maxWait = 90000;
       let connected = false;
 
-      const checkNow = async () => {
-        if (connected) return;
-        attempts++;
-        const isUp = await checkServerHealth(5000);
-        if (isUp && !connected) {
-          connected = true;
-          clearInterval(pollTimer);
-          if (statusDot) statusDot.classList.add('online');
-          statusText.textContent = 'Status: Connected! Initializing app…';
-          const lbl = $('#serverLoadingText');
-          if (lbl) lbl.textContent = '✓ Cloud engine ready!';
-          setTimeout(() => {
-            modal.hidden = true;
-            loadResults(true);
-            refreshDownloads();
-            if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
-          }, 400);
-        } else if (attempts >= 25) {
-          clearInterval(pollTimer);
-          wakeBtn.disabled = false;
-          wakeBtn.style.opacity = '1';
-          loadingArea.hidden = true;
-          statusText.textContent = 'Status: Cloud node is taking longer than usual. Click to retry.';
-        }
-      };
+      while (!connected && Date.now() - startTime < maxWait) {
+        connected = await checkServerHealth(4000);
+        if (connected) break;
+        await new Promise(r => setTimeout(r, 2000));
+      }
 
-      const pollTimer = setInterval(checkNow, 2000);
-      checkNow();
+      if (connected) {
+        if (statusDot) statusDot.classList.add('online');
+        statusText.textContent = 'Status: Connected! Launching app…';
+        const lbl = $('#serverLoadingText');
+        if (lbl) lbl.textContent = '✓ Cloud engine ready!';
+        setTimeout(() => {
+          modal.hidden = true;
+          statusEl.textContent = '';
+          loadResults(true);
+          refreshDownloads();
+          if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
+        }, 350);
+      } else {
+        wakeBtn.disabled = false;
+        wakeBtn.style.opacity = '1';
+        loadingArea.hidden = true;
+        statusText.textContent = 'Status: Node wake-up took too long. Click to retry.';
+      }
     };
   }
 }
@@ -1106,9 +1103,15 @@ async function boot() {
 
   // Running remotely (Firebase Hosting or Android App)
   statusEl.textContent = 'Connecting…';
-  const isUp = await checkServerHealth(4000);
+  let isUp = await checkServerHealth(7000);
+  if (!isUp) {
+    isUp = await checkServerHealth(3500);
+  }
+
+  const modal = $('#serverWakeupModal');
   if (isUp) {
     // Server is ALREADY running: Load immediately! NEVER show the modal!
+    if (modal) modal.hidden = true;
     statusEl.textContent = '';
     loadResults(true);
     refreshDownloads();
