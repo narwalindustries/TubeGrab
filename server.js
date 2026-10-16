@@ -552,6 +552,8 @@ app.get('/health', (req, res) => res.status(200).send('OK'));
 // Secret API Key Guard: Enforces authorization if API_SECRET_KEY is set in .env
 app.use('/api', (req, res, next) => {
   if (!API_SECRET_KEY) return next();
+  const isLoopback = req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1';
+  if (isLoopback) return next();
   const token = req.headers['x-api-key'] ||
                 (req.headers['authorization'] || '').replace(/^Bearer\s+/i, '') ||
                 req.query.key;
