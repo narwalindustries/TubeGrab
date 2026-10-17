@@ -322,6 +322,7 @@ function unmutePlayer() {
 
 function switchToEmbedPlayer(id) {
   if (!id) return;
+  clearTimeout(playerFallbackTimer);
   const video = $('#playerVideo');
   try { video.pause(); } catch (_) {}
   video.hidden = true;
@@ -425,7 +426,10 @@ function setVideoSource(id, start = 0, autoplay = true) {
   if (autoplay) playPlayerMedia();
 }
 
+let playerFallbackTimer = null;
+
 function loadPlayerVideo(id, start = 0, autoplay = true) {
+  clearTimeout(playerFallbackTimer);
   const iframe = $('#playerIframe');
   if (iframe) {
     iframe.src = '';
@@ -443,6 +447,13 @@ function loadPlayerVideo(id, start = 0, autoplay = true) {
   $('#volumeBar').style.setProperty('--volume-level', `${(playerMuted ? 0 : playerVolume) * 100}%`);
   updateQueueControls();
   video.pause();
+
+  // Fast 2.5s watchdog: automatically switch to responsive embed if backend stream has delay
+  playerFallbackTimer = setTimeout(() => {
+    if (activeVideoId === id && !playerReady) {
+      switchToEmbedPlayer(id);
+    }
+  }, 2500);
 
   if (start > 0) {
     setVideoSource(id, start, autoplay);
@@ -635,6 +646,7 @@ function closeModal(m) {
     }
     const video = $('#playerVideo');
     video.hidden = false;
+    clearTimeout(playerFallbackTimer);
     clearTimeout(ramPollTimer);
     clearTimeout(stallWatchdog);
     hideBuffering();
