@@ -414,10 +414,10 @@ function getInnertube() {
 
 async function extractWithInnertube(id, maxHeight = 720, videoOnly = false) {
   const yt = await getInnertube();
-  const clients = ['VISIONOS', 'ANDROID', 'WEB', 'IOS'];
+  const clients = ['IOS', 'ANDROID', 'MWEB', 'WEB'];
   for (const client of clients) {
     try {
-      const info = await yt.getInfo(id, { client });
+      const info = await yt.getBasicInfo(id, { client });
       const fmts = info.streaming_data?.adaptive_formats || [];
       if (!fmts.length) continue;
 
@@ -448,7 +448,16 @@ async function extractWithInnertube(id, maxHeight = 720, videoOnly = false) {
 
 async function getInnertubeInfo(id) {
   const yt = await getInnertube();
-  const info = await yt.getInfo(id, { client: 'WEB' }).catch(() => yt.getInfo(id, { client: 'VISIONOS' }));
+  const clients = ['IOS', 'ANDROID', 'MWEB', 'WEB'];
+  let info = null;
+  for (const client of clients) {
+    try {
+      info = await yt.getBasicInfo(id, { client });
+      if (info && info.streaming_data) break;
+    } catch (_) {}
+  }
+  if (!info || !info.streaming_data) throw new Error('Could not fetch video info from Innertube');
+
   const fmts = [
     ...(info.streaming_data?.formats || []),
     ...(info.streaming_data?.adaptive_formats || []),
@@ -568,7 +577,7 @@ app.use('/api', (req, res, next) => {
 });
 
 const baseArgs = (noPlaylist = true) => {
-  const a = ['--no-warnings', '--js-runtimes', 'node'];
+  const a = ['--no-warnings', '--js-runtimes', 'node', '--extractor-args', 'youtube:player_client=android,web'];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
   if (cookiePath) a.push('--cookies', cookiePath);
@@ -682,9 +691,12 @@ app.get('/api/search', async (req, res) => {
   try {
     if (isHomeFeed) {
       const pool = await getHomeFeedVideos(seedNumber);
-      const filtered = pool.filter(v => !excludedIds.has(v.id));
-      const results = filtered.slice(page * SEARCH_PAGE_SIZE, end);
-      return res.json({ results, hasMore: filtered.length > end && page + 1 < MAX_SEARCH_PAGES });
+      let list = pool.filter(v => !excludedIds.has(v.id));
+      if (list.length < SEARCH_PAGE_SIZE) {
+        list = pool;
+      }
+      const results = list.slice(page * SEARCH_PAGE_SIZE, end);
+      return res.json({ results, hasMore: list.length > end && page + 1 < MAX_SEARCH_PAGES });
     }
 
     // User Search Query: YouTube-style ranking
@@ -718,39 +730,41 @@ app.get('/api/info', async (req, res) => {
   try {
     const info = await cached('i:' + id, 10 * 60e3, async () => {
       try {
-        const raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
-        const fmts = raw.formats || [];
-        const audioSize = Math.max(0, ...fmts.filter(f => f.vcodec === 'none' && f.acodec !== 'none')
-          .map(f => f.filesize || f.filesize_approx || 0));
-        const byHeight = new Map();
-        for (const f of fmts) {
-          if (!f.vcodec || f.vcodec === 'none' || !f.height || f.height < 144) continue;
-          if (f.protocol === 'mhtml' || f.ext === 'mhtml') continue;
-          if (typeof f.format_note === 'string' && f.format_note.toLowerCase().includes('storyboard')) continue;
-          const size = f.filesize || f.filesize_approx || 0;
-          byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, size));
-        }
-        const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
-          height: h, label: h + 'p' + (h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
-          size: s ? s + audioSize : null,
-        }));
-        const playableFormats = fmts.filter(f => f.ext === 'mp4' && f.height
-          && typeof f.vcodec === 'string' && f.vcodec.startsWith('avc1'));
-        const hasDirectFormats = playableFormats.some(f => f.protocol === 'https');
-        const playbackQualities = [...new Set(playableFormats
-          .filter(f => !hasDirectFormats || f.protocol === 'https')
-          .map(f => f.height))].sort((a, b) => b - a);
-        const audio = [
-          { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-          { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-          { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-          { q: 'm4a', label: 'M4A · Best (AAC)' },
-          { q: 'opus', label: 'OPUS · Best quality' },
-        ];
-        return { id, title: raw.title, duration: raw.duration, video, audio, playbackQualities };
-      } catch (err) {
-        return getInnertubeInfo(id);
+        return await getInnertubeInfo(id);
+      } catch (innerErr) {
+        console.warn('[Info] Innertube info failed, trying yt-dlp fallback:', innerErr.message);
       }
+
+      const raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
+      const fmts = raw.formats || [];
+      const audioSize = Math.max(0, ...fmts.filter(f => f.vcodec === 'none' && f.acodec !== 'none')
+        .map(f => f.filesize || f.filesize_approx || 0));
+      const byHeight = new Map();
+      for (const f of fmts) {
+        if (!f.vcodec || f.vcodec === 'none' || !f.height || f.height < 144) continue;
+        if (f.protocol === 'mhtml' || f.ext === 'mhtml') continue;
+        if (typeof f.format_note === 'string' && f.format_note.toLowerCase().includes('storyboard')) continue;
+        const size = f.filesize || f.filesize_approx || 0;
+        byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, size));
+      }
+      const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
+        height: h, label: h + 'p' + (h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
+        size: s ? s + audioSize : null,
+      }));
+      const playableFormats = fmts.filter(f => f.ext === 'mp4' && f.height
+        && typeof f.vcodec === 'string' && f.vcodec.startsWith('avc1'));
+      const hasDirectFormats = playableFormats.some(f => f.protocol === 'https');
+      const playbackQualities = [...new Set(playableFormats
+        .filter(f => !hasDirectFormats || f.protocol === 'https')
+        .map(f => f.height))].sort((a, b) => b - a);
+      const audio = [
+        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+        { q: 'm4a', label: 'M4A · Best (AAC)' },
+        { q: 'opus', label: 'OPUS · Best quality' },
+      ];
+      return { id, title: raw.title, duration: raw.duration, video, audio, playbackQualities };
     });
     res.json(info);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -847,52 +861,111 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
   };
   activeRamJobs.set(cacheKey, job);
 
-  const formatStr = videoOnly
-    ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
-    : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
-
-  const ytdlpArgs = [
-    ...baseArgs(),
-    '--buffer-size', '1M',
-    '--retries', '10',
-    '--fragment-retries', '10',
-    '-N', '4',
-    '-f', formatStr,
-    '-o', '-',
-    `https://www.youtube.com/watch?v=${id}`,
-  ];
-
-  const ffmpegArgs = [
-    '-nostdin', '-hide_banner', '-loglevel', 'error',
-    '-i', 'pipe:0',
-    '-map', '0:v:0',
-  ];
-  if (!videoOnly) {
+  const startFfmpegStream = (inputUrls) => {
+    const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
+    const ffmpegArgs = ['-nostdin', '-hide_banner', '-loglevel', 'error'];
+    for (const u of inputUrls) ffmpegArgs.push('-i', u);
+    ffmpegArgs.push('-map', '0:v:0');
+    if (!videoOnly && inputUrls.length > 1) {
+      ffmpegArgs.push(
+        '-map', '1:a:0?',
+        '-c:a', 'copy',
+        '-bsf:a', 'aac_adtstoasc',
+        '-max_muxing_queue_size', '4096'
+      );
+    } else if (videoOnly) {
+      ffmpegArgs.push('-an');
+    }
     ffmpegArgs.push(
-      '-map', '0:a:0?',
-      '-c:a', 'copy',
-      '-bsf:a', 'aac_adtstoasc',
-      '-max_muxing_queue_size', '4096'
+      '-c:v', 'copy',
+      '-max_muxing_queue_size', '4096',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      'pipe:1'
     );
-  } else {
-    ffmpegArgs.push('-an');
-  }
-  ffmpegArgs.push(
-    '-c:v', 'copy',
-    '-max_muxing_queue_size', '4096',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    'pipe:1'
-  );
 
-  let ytdlpProc = null;
-  let ffmpegProc = null;
+    const proc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
+    proc.stdin?.on('error', () => {});
+    proc.stdout?.on('error', () => {});
+    proc.stderr?.on('error', () => {});
+    proc.on('error', () => {});
 
-  try {
+    proc.stdout.on('data', chunk => {
+      job.chunks.push(chunk);
+      job.totalBytes += chunk.length;
+      for (const listener of job.listeners) {
+        try { listener.onData(chunk); } catch (_) {}
+      }
+    });
+
+    job.cleanup = () => {
+      if (proc && !proc.killed) try { proc.kill(); } catch (_) {}
+    };
+
+    proc.on('close', code => {
+      if (code === 0 && job.chunks.length) {
+        const fullBuffer = Buffer.concat(job.chunks);
+        saveRamStream(cacheKey, fullBuffer);
+        job.status = 'ready';
+        for (const listener of job.listeners) {
+          try { listener.onEnd(); } catch (_) {}
+        }
+      } else {
+        job.status = 'error';
+        job.error = 'Stream encoding interrupted';
+        for (const listener of job.listeners) {
+          try { listener.onError(job.error); } catch (_) {}
+        }
+      }
+      activeRamJobs.delete(cacheKey);
+    });
+  };
+
+  // 1. Try Innertube direct URL extraction first (1.5s, direct HTTP, zero Python overhead)
+  extractWithInnertube(id, maxHeight, videoOnly).then(urls => {
+    if (urls && urls.length > 0) {
+      startFfmpegStream(urls);
+      return;
+    }
+    throw new Error('Innertube extracted 0 urls');
+  }).catch(err => {
+    console.warn('[Stream] Innertube stream failed, falling back to yt-dlp:', err.message);
+
+    // 2. Fallback to yt-dlp with android client
+    const formatStr = videoOnly
+      ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
+      : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
+
+    const ytdlpArgs = [
+      ...baseArgs(),
+      '--buffer-size', '1M',
+      '-f', formatStr,
+      '-o', '-',
+      `https://www.youtube.com/watch?v=${id}`,
+    ];
+
+    const ffmpegArgs = [
+      '-nostdin', '-hide_banner', '-loglevel', 'error',
+      '-i', 'pipe:0',
+      '-map', '0:v:0',
+    ];
+    if (!videoOnly) {
+      ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', '-max_muxing_queue_size', '4096');
+    } else {
+      ffmpegArgs.push('-an');
+    }
+    ffmpegArgs.push(
+      '-c:v', 'copy',
+      '-max_muxing_queue_size', '4096',
+      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+      '-f', 'mp4',
+      'pipe:1'
+    );
+
     const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
     const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-    ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
-    ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
+    const ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
+    const ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
 
     ytdlpProc.stdin?.on('error', () => {});
     ytdlpProc.stdout?.on('error', () => {});
@@ -905,7 +978,6 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
     ffmpegProc.on('error', () => {});
 
     ytdlpProc.stdout.pipe(ffmpegProc.stdin);
-
     ffmpegProc.stdout.on('data', chunk => {
       job.chunks.push(chunk);
       job.totalBytes += chunk.length;
@@ -928,92 +1000,16 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
         for (const listener of job.listeners) {
           try { listener.onEnd(); } catch (_) {}
         }
-        activeRamJobs.delete(cacheKey);
       } else {
-        // Fallback to youtubei.js Innertube if ytdlp failed or produced insufficient chunks
-        if (job.totalBytes < 500000) {
-          job.chunks = [];
-          job.totalBytes = 0;
-          extractWithInnertube(id, maxHeight, videoOnly).then(urls => {
-            if (!urls || !urls.length) throw new Error('Extract failed');
-            const fbArgs = ['-nostdin', '-hide_banner', '-loglevel', 'error'];
-            for (const u of urls) fbArgs.push('-i', u);
-            fbArgs.push('-map', '0:v:0');
-            if (!videoOnly) {
-              if (urls.length > 1) fbArgs.push('-map', '1:a:0?');
-              else fbArgs.push('-map', '0:a:0?');
-              fbArgs.push(
-                '-c:a', 'copy',
-                '-bsf:a', 'aac_adtstoasc',
-                '-max_muxing_queue_size', '4096'
-              );
-            } else {
-              fbArgs.push('-an');
-            }
-            fbArgs.push(
-              '-c:v', 'copy',
-              '-max_muxing_queue_size', '4096',
-              '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-              '-f', 'mp4',
-              'pipe:1'
-            );
-            const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-            const fbFfmpeg = spawn(ffmpegBin, fbArgs, { windowsHide: true });
-            fbFfmpeg.stdin?.on('error', () => {});
-            fbFfmpeg.stdout?.on('error', () => {});
-            fbFfmpeg.stderr?.on('error', () => {});
-            fbFfmpeg.on('error', () => {});
-            job.cleanup = () => { if (!fbFfmpeg.killed) try { fbFfmpeg.kill(); } catch (_) {} };
-            fbFfmpeg.stdout.on('data', c => {
-              job.chunks.push(c);
-              job.totalBytes += c.length;
-              for (const listener of job.listeners) {
-                try { listener.onData(c); } catch (_) {}
-              }
-            });
-            fbFfmpeg.on('close', fbCode => {
-              if (fbCode === 0 && job.chunks.length) {
-                const fullBuffer = Buffer.concat(job.chunks);
-                saveRamStream(cacheKey, fullBuffer);
-                job.status = 'ready';
-                for (const listener of job.listeners) {
-                  try { listener.onEnd(); } catch (_) {}
-                }
-              } else {
-                job.status = 'error';
-                job.error = 'Innertube fallback remux failed';
-                for (const listener of job.listeners) {
-                  try { listener.onError(job.error); } catch (_) {}
-                }
-              }
-              activeRamJobs.delete(cacheKey);
-            });
-          }).catch(err => {
-            job.status = 'error';
-            job.error = err.message || 'Stream extraction failed';
-            for (const listener of job.listeners) {
-              try { listener.onError(job.error); } catch (_) {}
-            }
-            activeRamJobs.delete(cacheKey);
-          });
-        } else {
-          job.status = 'error';
-          job.error = 'Stream interrupted';
-          for (const listener of job.listeners) {
-            try { listener.onError(job.error); } catch (_) {}
-          }
-          activeRamJobs.delete(cacheKey);
+        job.status = 'error';
+        job.error = 'Fallback stream interrupted';
+        for (const listener of job.listeners) {
+          try { listener.onError(job.error); } catch (_) {}
         }
       }
+      activeRamJobs.delete(cacheKey);
     });
-  } catch (err) {
-    job.status = 'error';
-    job.error = err.message;
-    for (const listener of job.listeners) {
-      try { listener.onError(job.error); } catch (_) {}
-    }
-    activeRamJobs.delete(cacheKey);
-  }
+  });
 
   return job;
 }
