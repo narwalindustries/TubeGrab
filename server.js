@@ -482,8 +482,8 @@ async function getInnertubeInfo(id) {
   ];
   return {
     id,
-    title: info.basic_info.title,
-    duration: info.basic_info.duration,
+    title: info.basic_info?.title || 'YouTube Video',
+    duration: info.basic_info?.duration || 0,
     video,
     audio,
     playbackQualities,
@@ -577,7 +577,12 @@ app.use('/api', (req, res, next) => {
 });
 
 const baseArgs = (noPlaylist = true) => {
-  const a = ['--no-warnings', '--js-runtimes', 'node', '--extractor-args', 'youtube:player_client=android,web'];
+  const a = [
+    '--no-warnings',
+    '--socket-timeout', '10',
+    '--js-runtimes', 'node',
+    '--extractor-args', 'youtube:player_client=tv,mweb,android,web',
+  ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
   if (cookiePath) a.push('--cookies', cookiePath);
@@ -861,154 +866,82 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
   };
   activeRamJobs.set(cacheKey, job);
 
-  const startFfmpegStream = (inputUrls) => {
-    const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-    const ffmpegArgs = ['-nostdin', '-hide_banner', '-loglevel', 'error'];
-    for (const u of inputUrls) ffmpegArgs.push('-i', u);
-    ffmpegArgs.push('-map', '0:v:0');
-    if (!videoOnly && inputUrls.length > 1) {
-      ffmpegArgs.push(
-        '-map', '1:a:0?',
-        '-c:a', 'copy',
-        '-bsf:a', 'aac_adtstoasc',
-        '-max_muxing_queue_size', '4096'
-      );
-    } else if (videoOnly) {
-      ffmpegArgs.push('-an');
+  const formatStr = videoOnly
+    ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
+    : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
+
+  const ytdlpArgs = [
+    ...baseArgs(),
+    '--buffer-size', '1M',
+    '-f', formatStr,
+    '-o', '-',
+    `https://www.youtube.com/watch?v=${id}`,
+  ];
+
+  const ffmpegArgs = [
+    '-nostdin', '-hide_banner', '-loglevel', 'error',
+    '-i', 'pipe:0',
+    '-map', '0:v:0',
+  ];
+  if (!videoOnly) {
+    ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', '-max_muxing_queue_size', '4096');
+  } else {
+    ffmpegArgs.push('-an');
+  }
+  ffmpegArgs.push(
+    '-c:v', 'copy',
+    '-max_muxing_queue_size', '4096',
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+    '-f', 'mp4',
+    'pipe:1'
+  );
+
+  const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
+  const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
+  const ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
+  const ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
+
+  ytdlpProc.stdin?.on('error', () => {});
+  ytdlpProc.stdout?.on('error', () => {});
+  ytdlpProc.stderr?.on('error', () => {});
+  ytdlpProc.on('error', () => {});
+
+  ffmpegProc.stdin?.on('error', () => {});
+  ffmpegProc.stdout?.on('error', () => {});
+  ffmpegProc.stderr?.on('error', () => {});
+  ffmpegProc.on('error', () => {});
+
+  ytdlpProc.stdout.pipe(ffmpegProc.stdin);
+  ffmpegProc.stdout.on('data', chunk => {
+    job.chunks.push(chunk);
+    job.totalBytes += chunk.length;
+    for (const listener of job.listeners) {
+      try { listener.onData(chunk); } catch (_) {}
     }
-    ffmpegArgs.push(
-      '-c:v', 'copy',
-      '-max_muxing_queue_size', '4096',
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-f', 'mp4',
-      'pipe:1'
-    );
+  });
 
-    const proc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
-    proc.stdin?.on('error', () => {});
-    proc.stdout?.on('error', () => {});
-    proc.stderr?.on('error', () => {});
-    proc.on('error', () => {});
-
-    proc.stdout.on('data', chunk => {
-      job.chunks.push(chunk);
-      job.totalBytes += chunk.length;
-      for (const listener of job.listeners) {
-        try { listener.onData(chunk); } catch (_) {}
-      }
-    });
-
-    job.cleanup = () => {
-      if (proc && !proc.killed) try { proc.kill(); } catch (_) {}
-    };
-
-    proc.on('close', code => {
-      if (code === 0 && job.chunks.length) {
-        const fullBuffer = Buffer.concat(job.chunks);
-        saveRamStream(cacheKey, fullBuffer);
-        job.status = 'ready';
-        for (const listener of job.listeners) {
-          try { listener.onEnd(); } catch (_) {}
-        }
-      } else {
-        job.status = 'error';
-        job.error = 'Stream encoding interrupted';
-        for (const listener of job.listeners) {
-          try { listener.onError(job.error); } catch (_) {}
-        }
-      }
-      activeRamJobs.delete(cacheKey);
-    });
+  job.cleanup = () => {
+    if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
+    if (ffmpegProc && !ffmpegProc.killed) try { ffmpegProc.kill(); } catch (_) {}
   };
 
-  // 1. Try Innertube direct URL extraction first (1.5s, direct HTTP, zero Python overhead)
-  extractWithInnertube(id, maxHeight, videoOnly).then(urls => {
-    if (urls && urls.length > 0) {
-      startFfmpegStream(urls);
-      return;
-    }
-    throw new Error('Innertube extracted 0 urls');
-  }).catch(err => {
-    console.warn('[Stream] Innertube stream failed, falling back to yt-dlp:', err.message);
-
-    // 2. Fallback to yt-dlp with android client
-    const formatStr = videoOnly
-      ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
-      : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
-
-    const ytdlpArgs = [
-      ...baseArgs(),
-      '--buffer-size', '1M',
-      '-f', formatStr,
-      '-o', '-',
-      `https://www.youtube.com/watch?v=${id}`,
-    ];
-
-    const ffmpegArgs = [
-      '-nostdin', '-hide_banner', '-loglevel', 'error',
-      '-i', 'pipe:0',
-      '-map', '0:v:0',
-    ];
-    if (!videoOnly) {
-      ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', '-max_muxing_queue_size', '4096');
-    } else {
-      ffmpegArgs.push('-an');
-    }
-    ffmpegArgs.push(
-      '-c:v', 'copy',
-      '-max_muxing_queue_size', '4096',
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-f', 'mp4',
-      'pipe:1'
-    );
-
-    const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
-    const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-    const ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
-    const ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
-
-    ytdlpProc.stdin?.on('error', () => {});
-    ytdlpProc.stdout?.on('error', () => {});
-    ytdlpProc.stderr?.on('error', () => {});
-    ytdlpProc.on('error', () => {});
-
-    ffmpegProc.stdin?.on('error', () => {});
-    ffmpegProc.stdout?.on('error', () => {});
-    ffmpegProc.stderr?.on('error', () => {});
-    ffmpegProc.on('error', () => {});
-
-    ytdlpProc.stdout.pipe(ffmpegProc.stdin);
-    ffmpegProc.stdout.on('data', chunk => {
-      job.chunks.push(chunk);
-      job.totalBytes += chunk.length;
+  ffmpegProc.on('close', code => {
+    if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
+    if (code === 0 && job.chunks.length) {
+      const fullBuffer = Buffer.concat(job.chunks);
+      saveRamStream(cacheKey, fullBuffer);
+      job.status = 'ready';
       for (const listener of job.listeners) {
-        try { listener.onData(chunk); } catch (_) {}
+        try { listener.onEnd(); } catch (_) {}
       }
-    });
-
-    job.cleanup = () => {
-      if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
-      if (ffmpegProc && !ffmpegProc.killed) try { ffmpegProc.kill(); } catch (_) {}
-    };
-
-    ffmpegProc.on('close', code => {
-      if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
-      if (code === 0 && job.chunks.length) {
-        const fullBuffer = Buffer.concat(job.chunks);
-        saveRamStream(cacheKey, fullBuffer);
-        job.status = 'ready';
-        for (const listener of job.listeners) {
-          try { listener.onEnd(); } catch (_) {}
-        }
-      } else {
-        job.status = 'error';
-        job.error = 'Fallback stream interrupted';
-        for (const listener of job.listeners) {
-          try { listener.onError(job.error); } catch (_) {}
-        }
+    } else {
+      job.status = 'error';
+      job.error = 'Stream encoding interrupted';
+      for (const listener of job.listeners) {
+        try { listener.onError(job.error); } catch (_) {}
       }
-      activeRamJobs.delete(cacheKey);
-    });
+    }
+    activeRamJobs.delete(cacheKey);
   });
 
   return job;
