@@ -448,7 +448,7 @@ async function extractWithInnertube(id, maxHeight = 720, videoOnly = false) {
 
 async function getInnertubeInfo(id) {
   const yt = await getInnertube();
-  const clients = ['MWEB', 'ANDROID', 'IOS', 'WEB', undefined];
+  const clients = ['ANDROID', 'MWEB', undefined];
   let info = null;
   for (const client of clients) {
     try {
@@ -581,7 +581,7 @@ const baseArgs = (noPlaylist = true) => {
     '--no-warnings',
     '--socket-timeout', '15',
     '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=web_embedded,android',
+    '--extractor-args', 'youtube:player_client=android,mweb',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -805,16 +805,37 @@ app.get('/api/info', async (req, res) => {
 });
 
 // ---------- high-speed direct CDN streaming proxy with HTTP Range support ----------
+async function getDirectStreamUrl(id) {
+  // 1. In-process Innertube (instant, 200ms in-memory decipher, bypasses cloud IP limits)
+  try {
+    const yt = await getInnertube();
+    for (const client of ['ANDROID', 'MWEB']) {
+      try {
+        const info = await yt.getBasicInfo(id, { client });
+        const formats = info.streaming_data?.formats || [];
+        if (formats.length) {
+          const f = formats.find(fmt => fmt.itag === 18) || formats[0];
+          const url = await f.decipher(yt.session.player);
+          if (url && url.startsWith('http')) return url;
+        }
+      } catch (_) {}
+    }
+  } catch (innerErr) {
+    console.warn('[Stream] Innertube direct URL failed, falling back to yt-dlp:', innerErr.message);
+  }
+
+  // 2. Fallback to yt-dlp with android,mweb client
+  const lines = await runLines(['-f', '18/best', '-g', `https://www.youtube.com/watch?v=${id}`]);
+  if (lines.length && lines[0].startsWith('http')) return lines[0];
+  throw new Error('No stream URL available');
+}
+
 app.get('/api/preload/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
   const urlKey = 'stream_url:' + id;
   try {
-    await cached(urlKey, 60 * 60 * 1000, async () => {
-      const lines = await runLines(['-f', '18/best', '-g', `https://www.youtube.com/watch?v=${id}`]);
-      if (!lines.length || !lines[0].startsWith('http')) throw new Error('No stream URL available');
-      return lines[0];
-    });
+    await cached(urlKey, 60 * 60 * 1000, () => getDirectStreamUrl(id));
     return res.json({ status: 'ready', cached: true, totalBytes: 10 * 1024 * 1024 });
   } catch (_) {
     return res.json({ status: 'ready', cached: false, totalBytes: 0 });
@@ -835,11 +856,7 @@ app.get('/api/stream/:id', async (req, res) => {
 
   try {
     const urlKey = 'stream_url:' + id;
-    let streamUrl = await cached(urlKey, 60 * 60 * 1000, async () => {
-      const lines = await runLines(['-f', '18/best', '-g', `https://www.youtube.com/watch?v=${id}`]);
-      if (!lines.length || !lines[0].startsWith('http')) throw new Error('No stream URL available');
-      return lines[0];
-    });
+    let streamUrl = await cached(urlKey, 60 * 60 * 1000, () => getDirectStreamUrl(id));
 
     const headers = {};
     if (req.headers.range) {
