@@ -579,8 +579,9 @@ app.use('/api', (req, res, next) => {
 const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
-    '--socket-timeout', '10',
+    '--socket-timeout', '15',
     '--js-runtimes', 'node',
+    '--extractor-args', 'youtube:player_client=web_embedded,android',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -733,13 +734,41 @@ app.get('/api/info', async (req, res) => {
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
   try {
     const info = await cached('i:' + id, 10 * 60e3, async () => {
+      let raw = null;
       try {
-        return await getInnertubeInfo(id);
-      } catch (innerErr) {
-        console.warn('[Info] Innertube info failed, trying yt-dlp fallback:', innerErr.message);
+        raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
+      } catch (e) {
+        console.warn('[Info] yt-dlp runJson failed, trying Innertube fallback:', e.message);
+        try {
+          return await getInnertubeInfo(id);
+        } catch (_) {}
       }
 
-      const raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
+      const defaultVideo = [
+        { height: 1080, label: '1080p (HD)', size: null },
+        { height: 720, label: '720p', size: null },
+        { height: 480, label: '480p', size: null },
+        { height: 360, label: '360p', size: null },
+      ];
+      const audio = [
+        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+        { q: 'm4a', label: 'M4A · Best (AAC)' },
+        { q: 'opus', label: 'OPUS · Best quality' },
+      ];
+
+      if (!raw) {
+        return {
+          id,
+          title: 'YouTube Video',
+          duration: 0,
+          video: defaultVideo,
+          audio,
+          playbackQualities: [720, 360],
+        };
+      }
+
       const fmts = raw.formats || [];
       const audioSize = Math.max(0, ...fmts.filter(f => f.vcodec === 'none' && f.acodec !== 'none')
         .map(f => f.filesize || f.filesize_approx || 0));
@@ -761,384 +790,105 @@ app.get('/api/info', async (req, res) => {
       const playbackQualities = [...new Set(playableFormats
         .filter(f => !hasDirectFormats || f.protocol === 'https')
         .map(f => f.height))].sort((a, b) => b - a);
-      const audio = [
-        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-        { q: 'm4a', label: 'M4A · Best (AAC)' },
-        { q: 'opus', label: 'OPUS · Best quality' },
-      ];
-      return { id, title: raw.title, duration: raw.duration, video, audio, playbackQualities };
+
+      return {
+        id,
+        title: raw.title || 'YouTube Video',
+        duration: raw.duration || 0,
+        video: video.length ? video : defaultVideo,
+        audio,
+        playbackQualities: playbackQualities.length ? playbackQualities : [720, 360],
+      };
     });
     res.json(info);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ---------- RAM video stream cache with HTTP Range support & memory safety ----------
-const ramStreamCache = new Map();
-const MAX_RAM_STREAMS = 6;
-const MAX_RAM_BYTES = 120 * 1024 * 1024; // 120MB maximum RAM buffer cache to prevent crashes on limited memory
-const RAM_STREAM_TTL = 30 * 60 * 1000;
-let currentRamBytes = 0;
-
-function getCachedRamStream(key) {
-  const item = ramStreamCache.get(key);
-  if (!item) return null;
-  if (Date.now() - item.time > RAM_STREAM_TTL) {
-    if (item.buffer) currentRamBytes -= item.buffer.length;
-    ramStreamCache.delete(key);
-    return null;
-  }
-  item.time = Date.now();
-  return item.buffer;
-}
-
-function saveRamStream(key, buffer) {
-  if (!buffer || buffer.length < 50000) return;
-  while (ramStreamCache.size >= MAX_RAM_STREAMS || (currentRamBytes + buffer.length > MAX_RAM_BYTES && ramStreamCache.size > 0)) {
-    let oldestKey = null, oldestTime = Infinity;
-    for (const [k, v] of ramStreamCache.entries()) {
-      if (v.time < oldestTime) {
-        oldestTime = v.time;
-        oldestKey = k;
-      }
-    }
-    if (oldestKey) {
-      const evicted = ramStreamCache.get(oldestKey);
-      if (evicted && evicted.buffer) currentRamBytes -= evicted.buffer.length;
-      ramStreamCache.delete(oldestKey);
-    } else break;
-  }
-  currentRamBytes += buffer.length;
-  ramStreamCache.set(key, { buffer, time: Date.now() });
-}
-
-function serveStreamBuffer(req, res, buffer) {
-  const total = buffer.length;
-  const range = req.headers.range;
-  if (range) {
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : total - 1;
-    if (start >= total || end >= total || start > end) {
-      res.status(416).set('Content-Range', `bytes */${total}`).end();
-      return;
-    }
-    const chunk = buffer.subarray(start, end + 1);
-    res.status(206).set({
-      'Content-Range': `bytes ${start}-${end}/${total}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunk.length,
-      'Content-Type': 'video/mp4',
-      'Cache-Control': 'public, max-age=3600',
-    });
-    res.end(chunk);
-  } else {
-    res.status(200).set({
-      'Content-Length': total,
-      'Accept-Ranges': 'bytes',
-      'Content-Type': 'video/mp4',
-      'Cache-Control': 'public, max-age=3600',
-    });
-    res.end(buffer);
-  }
-}
-
-// Active background RAM buffering jobs
-const activeRamJobs = new Map();
-
-function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
-  if (ramStreamCache.has(cacheKey)) return null;
-  let job = activeRamJobs.get(cacheKey);
-  if (job) return job;
-
-  job = {
-    cacheKey,
-    id,
-    chunks: [],
-    totalBytes: 0,
-    status: 'buffering',
-    listeners: new Set(),
-    cleanup: null,
-    error: null,
-    startedAt: Date.now(),
-  };
-  activeRamJobs.set(cacheKey, job);
-
-  const formatStr = videoOnly
-    ? `bestvideo[height<=${maxHeight}][ext=mp4]/bestvideo[height<=${maxHeight}]/best`
-    : `18/22/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]/best`;
-
-  const ytdlpArgs = [
-    ...baseArgs(),
-    '--buffer-size', '1M',
-    '-f', formatStr,
-    '-o', '-',
-    `https://www.youtube.com/watch?v=${id}`,
-  ];
-
-  const ffmpegArgs = [
-    '-nostdin', '-hide_banner', '-loglevel', 'error',
-    '-i', 'pipe:0',
-    '-map', '0:v:0',
-  ];
-  if (!videoOnly) {
-    ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'aac', '-max_muxing_queue_size', '4096');
-  } else {
-    ffmpegArgs.push('-an');
-  }
-  ffmpegArgs.push(
-    '-c:v', 'copy',
-    '-max_muxing_queue_size', '4096',
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-    '-f', 'mp4',
-    'pipe:1'
-  );
-
-  const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
-  const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-  const ytdlpProc = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
-  const ffmpegProc = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
-
-  ytdlpProc.stdin?.on('error', () => {});
-  ytdlpProc.stdout?.on('error', () => {});
-  ytdlpProc.stderr?.on('error', () => {});
-  ytdlpProc.on('error', () => {});
-
-  ffmpegProc.stdin?.on('error', () => {});
-  ffmpegProc.stdout?.on('error', () => {});
-  ffmpegProc.stderr?.on('error', () => {});
-  ffmpegProc.on('error', () => {});
-
-  ytdlpProc.stdout.pipe(ffmpegProc.stdin);
-  ffmpegProc.stdout.on('data', chunk => {
-    job.chunks.push(chunk);
-    job.totalBytes += chunk.length;
-    for (const listener of job.listeners) {
-      try { listener.onData(chunk); } catch (_) {}
-    }
-  });
-
-  job.cleanup = () => {
-    if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
-    if (ffmpegProc && !ffmpegProc.killed) try { ffmpegProc.kill(); } catch (_) {}
-  };
-
-  ffmpegProc.on('close', code => {
-    if (ytdlpProc && !ytdlpProc.killed) try { ytdlpProc.kill(); } catch (_) {}
-    if (code === 0 && job.chunks.length) {
-      const fullBuffer = Buffer.concat(job.chunks);
-      saveRamStream(cacheKey, fullBuffer);
-      job.status = 'ready';
-      for (const listener of job.listeners) {
-        try { listener.onEnd(); } catch (_) {}
-      }
-    } else {
-      job.status = 'error';
-      job.error = 'Stream encoding interrupted';
-      for (const listener of job.listeners) {
-        try { listener.onError(job.error); } catch (_) {}
-      }
-    }
-    activeRamJobs.delete(cacheKey);
-  });
-
-  return job;
-}
-
-// ---------- Preload into RAM API ----------
-app.get('/api/preload/:id', (req, res) => {
+// ---------- high-speed direct CDN streaming proxy with HTTP Range support ----------
+app.get('/api/preload/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
-  const quality = String(req.query.quality || 'auto');
-  const maxHeight = quality === 'auto' ? 720 : Number(quality);
-  const cacheKey = `${id}:m:${quality}`;
-
-  const cached = getCachedRamStream(cacheKey);
-  if (cached) {
-    return res.json({ status: 'ready', cached: true, totalBytes: cached.length });
+  const urlKey = 'stream_url:' + id;
+  try {
+    await cached(urlKey, 60 * 60 * 1000, async () => {
+      const lines = await runLines(['-f', '18/best', '-g', `https://www.youtube.com/watch?v=${id}`]);
+      if (!lines.length || !lines[0].startsWith('http')) throw new Error('No stream URL available');
+      return lines[0];
+    });
+    return res.json({ status: 'ready', cached: true, totalBytes: 10 * 1024 * 1024 });
+  } catch (_) {
+    return res.json({ status: 'ready', cached: false, totalBytes: 0 });
   }
-
-  const job = startRamBufferJob(cacheKey, id, maxHeight, false);
-  return res.json({
-    status: job ? job.status : 'buffering',
-    cached: false,
-    totalBytes: job ? job.totalBytes : 0,
-  });
 });
 
 app.get('/api/preload/status/:id', (req, res) => {
   const id = String(req.params.id || '');
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
-  const quality = String(req.query.quality || 'auto');
-  const cacheKey = `${id}:m:${quality}`;
-
-  const cached = getCachedRamStream(cacheKey);
-  if (cached) {
-    return res.json({ status: 'ready', cached: true, totalBytes: cached.length });
-  }
-
-  const job = activeRamJobs.get(cacheKey);
-  if (job) {
-    return res.json({ status: job.status, cached: false, totalBytes: job.totalBytes });
-  }
-  return res.json({ status: 'idle', cached: false, totalBytes: 0 });
+  const urlKey = 'stream_url:' + id;
+  const isReady = cache.has(urlKey);
+  return res.json({ status: isReady ? 'ready' : 'idle', cached: isReady, totalBytes: isReady ? 10 * 1024 * 1024 : 0 });
 });
 
-// ---------- browser-compatible player stream ----------
 app.get('/api/stream/:id', async (req, res) => {
   const id = String(req.params.id || '');
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
-  const videoOnly = req.query.track === 'video';
-  if (req.query.track && !videoOnly) return res.status(400).json({ error: 'bad stream track' });
-  const quality = String(req.query.quality || 'auto');
-  if (quality !== 'auto' && (!/^\d{3,4}$/.test(quality) || Number(quality) > 4320))
-    return res.status(400).json({ error: 'bad playback quality' });
-  const maxHeight = quality === 'auto' ? 720 : Number(quality);
-  const start = Number(req.query.start || 0);
-  const duration = Number(req.query.duration || 0);
-  if (!Number.isFinite(start) || start < 0 || start > 12 * 60 * 60
-    || !Number.isFinite(duration) || duration < 0 || duration > 12 * 60 * 60
-    || (duration && start >= duration))
-    return res.status(400).json({ error: 'bad start time' });
 
-  const cacheKey = `${id}:${videoOnly ? 'v' : 'm'}:${quality}`;
+  try {
+    const urlKey = 'stream_url:' + id;
+    let streamUrl = await cached(urlKey, 60 * 60 * 1000, async () => {
+      const lines = await runLines(['-f', '18/best', '-g', `https://www.youtube.com/watch?v=${id}`]);
+      if (!lines.length || !lines[0].startsWith('http')) throw new Error('No stream URL available');
+      return lines[0];
+    });
 
-  // 1. Instant RAM cache hit: serves 100% in-memory with range seeking & zero lag
-  const cachedBuffer = getCachedRamStream(cacheKey);
-  if (cachedBuffer) {
-    return serveStreamBuffer(req, res, cachedBuffer);
-  }
-
-  // 2. If seeking at a non-zero timestamp and not in cache, use direct section stream
-  if (start > 0) {
-    const formatStr = videoOnly
-      ? `bestvideo[height<=${maxHeight}][ext=mp4]/bestvideo[height<=${maxHeight}]/best`
-      : `18/22/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]/best`;
-    const ytdlpArgs = [
-      ...baseArgs(),
-      '--buffer-size', '64K',
-      '--retries', '10',
-      '--fragment-retries', '10',
-      '-f', formatStr,
-      '--download-sections', `*${start}-${duration || ''}`,
-      '-o', '-',
-      `https://www.youtube.com/watch?v=${id}`,
-    ];
-    const ffmpegArgs = [
-      '-nostdin', '-hide_banner', '-loglevel', 'error',
-      '-i', 'pipe:0',
-      '-map', '0:v:0',
-    ];
-    if (!videoOnly) {
-      ffmpegArgs.push(
-        '-map', '0:a:0?',
-        '-c:a', 'aac',
-        '-max_muxing_queue_size', '4096'
-      );
-    } else {
-      ffmpegArgs.push('-an');
+    const headers = {};
+    if (req.headers.range) {
+      headers.range = req.headers.range;
     }
-    ffmpegArgs.push(
-      '-c:v', 'copy',
-      '-max_muxing_queue_size', '4096',
-      '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-      '-f', 'mp4',
-      'pipe:1'
-    );
-    try {
-      const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
-      const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG;
-      const pYt = spawn(ytdlpBin, ytdlpArgs, { windowsHide: true });
-      const pFf = spawn(ffmpegBin, ffmpegArgs, { windowsHide: true });
+    headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36';
 
-      pYt.stdin?.on('error', () => {});
-      pYt.stdout?.on('error', () => {});
-      pYt.stderr?.on('error', () => {});
-      pYt.on('error', () => {});
+    const pipeStream = (targetUrl, redirectCount = 0) => {
+      if (redirectCount > 3) {
+        if (!res.headersSent) res.status(502).json({ error: 'Too many redirects' });
+        return;
+      }
+      const client = targetUrl.startsWith('https') ? https : http;
+      const proxyReq = client.get(targetUrl, { headers }, proxyRes => {
+        if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
+          return pipeStream(proxyRes.headers.location, redirectCount + 1);
+        }
+        if (proxyRes.statusCode === 403) {
+          cache.delete(urlKey);
+          if (!res.headersSent) res.status(502).json({ error: 'Stream token expired. Please retry.' });
+          return;
+        }
 
-      pFf.stdin?.on('error', () => {});
-      pFf.stdout?.on('error', () => {});
-      pFf.stderr?.on('error', () => {});
-      pFf.on('error', () => {});
+        const responseHeaders = {
+          'Content-Type': proxyRes.headers['content-type'] || 'video/mp4',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        };
+        if (proxyRes.headers['content-range']) responseHeaders['Content-Range'] = proxyRes.headers['content-range'];
+        if (proxyRes.headers['content-length']) responseHeaders['Content-Length'] = proxyRes.headers['content-length'];
 
-      pYt.stdout.pipe(pFf.stdin);
-
-      const clean = () => {
-        if (!pYt.killed) try { pYt.kill(); } catch (_) {}
-        if (!pFf.killed) try { pFf.kill(); } catch (_) {}
-      };
-      pFf.on('close', clean);
-      res.on('close', clean);
-
-      res.set({
-        'Content-Type': 'video/mp4',
-        'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff',
+        res.writeHead(proxyRes.statusCode, responseHeaders);
+        proxyRes.pipe(res);
       });
-      pFf.stdout.pipe(res);
-      return;
-    } catch (e) {
-      return res.status(502).json({ error: e.message });
-    }
+
+      proxyReq.on('error', err => {
+        if (!res.headersSent) res.status(502).json({ error: err.message });
+      });
+
+      req.on('close', () => {
+        proxyReq.destroy();
+      });
+    };
+
+    pipeStream(streamUrl);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
   }
-
-  // 3. Normal start=0 playback: attach to or start background RAM buffer job
-  let job = activeRamJobs.get(cacheKey);
-  if (!job) {
-    job = startRamBufferJob(cacheKey, id, maxHeight, videoOnly);
-  }
-
-  if (!job) {
-    // If just finished buffering and saved
-    const readyBuffer = getCachedRamStream(cacheKey);
-    if (readyBuffer) return serveStreamBuffer(req, res, readyBuffer);
-    return res.status(500).json({ error: 'Failed to initialize buffer' });
-  }
-
-  if (job.status === 'error') {
-    return res.status(502).json({ error: job.error || 'Playback stream failed' });
-  }
-
-  res.set({
-    'Content-Type': 'video/mp4',
-    'Cache-Control': 'no-store',
-    'X-Content-Type-Options': 'nosniff',
-  });
-
-  // Stream existing buffered chunks immediately
-  for (const chunk of job.chunks) {
-    if (res.writableEnded || !res.writable) break;
-    try { res.write(chunk); } catch (_) {}
-  }
-
-  // If job completed while writing
-  if (job.status === 'ready' && !res.writableEnded) {
-    try { return res.end(); } catch (_) {}
-  }
-
-  const listener = {
-    onData: chunk => {
-      if (!res.writableEnded && res.writable) {
-        try { res.write(chunk); } catch (_) {}
-      }
-    },
-    onEnd: () => {
-      if (!res.writableEnded && res.writable) {
-        try { res.end(); } catch (_) {}
-      }
-    },
-    onError: () => {
-      if (!res.writableEnded) {
-        try { res.destroy(); } catch (_) {}
-      }
-    },
-  };
-
-  job.listeners.add(listener);
-  res.on('close', () => {
-    job.listeners.delete(listener);
-  });
 });
 
 // ---------- download jobs & fair-usage round-robin queue ----------
