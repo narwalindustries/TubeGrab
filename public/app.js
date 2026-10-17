@@ -178,21 +178,34 @@ async function loadResults(reset = false, refresh = false) {
   }
   const token = searchToken;
   loadingResults = true;
-  statusEl.textContent = currentPage ? 'Loading more videos…' : 'Loading…';
+  statusEl.innerHTML = `<div class="circle-spinner${currentPage > 0 ? ' circle-spinner-sm' : ''}"></div>`;
   try {
-    const params = new URLSearchParams({ q: activeQuery, page: currentPage, feed: feedSeed });
-    if (!activeQuery && feedExclusions.length) params.set('exclude', feedExclusions.join(','));
-    if (refresh) params.set('refresh', '1');
-    const { results, hasMore: more } = await api('/api/search?' + params);
-    if (token !== searchToken) return;
-    renderVideos(results);
-    hasMore = more;
-    currentPage++;
-    statusEl.textContent = results.length ? '' : (currentPage === 1 ? 'No videos found' : 'You have reached the end');
-  } catch (e) {
-    if (token === searchToken) {
-      statusEl.innerHTML = `<span class="err">Error: ${esc(e.message)}</span>`;
-      hasMore = false;
+    const maxAttempts = currentPage === 0 ? 15 : 1;
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+      if (token !== searchToken) return;
+      try {
+        const params = new URLSearchParams({ q: activeQuery, page: currentPage, feed: feedSeed });
+        if (!activeQuery && feedExclusions.length) params.set('exclude', feedExclusions.join(','));
+        if (refresh) params.set('refresh', '1');
+        const { results, hasMore: more } = await api('/api/search?' + params);
+        if (token !== searchToken) return;
+        renderVideos(results);
+        hasMore = more;
+        currentPage++;
+        statusEl.textContent = results.length ? '' : (currentPage === 1 ? 'No videos found' : 'You have reached the end');
+        return;
+      } catch (e) {
+        if (token !== searchToken) return;
+        attempt++;
+        if (attempt < maxAttempts && currentPage === 0) {
+          await new Promise(r => setTimeout(r, 2500));
+          continue;
+        }
+        statusEl.innerHTML = `<span class="err">Error: ${esc(e.message)}</span>`;
+        hasMore = false;
+        return;
+      }
     }
   } finally {
     if (token === searchToken) {
@@ -1023,69 +1036,6 @@ $('#searchForm').addEventListener('submit', e => {
 });
 const dl = new URLSearchParams(location.search).get('dl');
 
-async function checkServerHealth(timeoutMs = 5000) {
-  try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const res = await fetch(resolveUrl('/health'), { signal: controller.signal, cache: 'no-store' });
-    clearTimeout(timer);
-    return res.ok;
-  } catch (_) {
-    return false;
-  }
-}
-
-function showWakeupModal() {
-  const modal = $('#serverWakeupModal');
-  if (!modal) return;
-  modal.hidden = false;
-  const wakeBtn = $('#wakeServerBtn');
-  const loadingArea = $('#serverLoadingArea');
-  const statusDot = $('#serverPulseDot');
-  const statusText = $('#serverStatusText');
-
-  if (wakeBtn) {
-    wakeBtn.onclick = async () => {
-      wakeBtn.disabled = true;
-      wakeBtn.style.opacity = '0.5';
-      loadingArea.hidden = false;
-      statusText.textContent = 'Status: Initializing cloud processing node…';
-
-      // Send initial wake request immediately
-      fetch(resolveUrl('/health'), { cache: 'no-store', mode: 'no-cors' }).catch(() => {});
-
-      const startTime = Date.now();
-      const maxWait = 90000;
-      let connected = false;
-
-      while (!connected && Date.now() - startTime < maxWait) {
-        connected = await checkServerHealth(4000);
-        if (connected) break;
-        await new Promise(r => setTimeout(r, 2000));
-      }
-
-      if (connected) {
-        if (statusDot) statusDot.classList.add('online');
-        statusText.textContent = 'Status: Connected! Launching app…';
-        const lbl = $('#serverLoadingText');
-        if (lbl) lbl.textContent = '✓ Cloud engine ready!';
-        setTimeout(() => {
-          modal.hidden = true;
-          statusEl.textContent = '';
-          loadResults(true);
-          refreshDownloads();
-          if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
-        }, 350);
-      } else {
-        wakeBtn.disabled = false;
-        wakeBtn.style.opacity = '1';
-        loadingArea.hidden = true;
-        statusText.textContent = 'Status: Node wake-up took too long. Click to retry.';
-      }
-    };
-  }
-}
-
 // Wire Get App button
 $('#getAppButton')?.addEventListener('click', () => {
   const appModal = $('#appDownloadModal');
@@ -1093,34 +1043,9 @@ $('#getAppButton')?.addEventListener('click', () => {
 });
 
 async function boot() {
-  // If running locally (Windows Desktop app or localhost), boot directly with 0 delays
-  if (isLocalEnvironment()) {
-    loadResults(true);
-    refreshDownloads();
-    if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
-    return;
-  }
-
-  // Running remotely (Firebase Hosting or Android App)
-  statusEl.textContent = 'Connecting…';
-  let isUp = await checkServerHealth(7000);
-  if (!isUp) {
-    isUp = await checkServerHealth(3500);
-  }
-
-  const modal = $('#serverWakeupModal');
-  if (isUp) {
-    // Server is ALREADY running: Load immediately! NEVER show the modal!
-    if (modal) modal.hidden = true;
-    statusEl.textContent = '';
-    loadResults(true);
-    refreshDownloads();
-    if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
-  } else {
-    // Only show modal if server is in sleep mode / cold standby
-    statusEl.textContent = 'Cloud server is in standby. Click "Connect & Initialize Engine" above.';
-    showWakeupModal();
-  }
+  loadResults(true);
+  refreshDownloads();
+  if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');
 }
 
 boot();

@@ -176,36 +176,6 @@
   </div>
 </div>
 
-<div class="overlay" id="serverWakeupModal" hidden>
-  <div class="server-modal">
-    <div class="server-badge">
-      <span class="leaf-icon">⚡</span>
-      <span>High-Speed Cloud Engine</span>
-    </div>
-    <h2>Cloud Processing Node on Standby</h2>
-    <p class="server-desc">
-      To maintain high-speed throughput and prevent server congestion during peak traffic, our processing nodes pause when idle. Initializing takes only a few moments.
-    </p>
-
-    <div class="server-status-box" id="serverStatusBox">
-      <div class="server-pulse-dot" id="serverPulseDot"></div>
-      <span id="serverStatusText">Status: Standby (Idle)</span>
-    </div>
-
-    <button id="wakeServerBtn" class="wake-btn" type="button">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-      </svg>
-      <span>Connect & Initialize Engine</span>
-    </button>
-
-    <div id="serverLoadingArea" class="server-loading-area" hidden>
-      <div class="server-spinner"></div>
-      <p id="serverLoadingText">Connecting to cloud node… (Allocating dedicated processing pipeline)</p>
-      <div class="server-progress-bar"><div class="server-progress-fill"></div></div>
-    </div>
-  </div>
-</div>
 
 <script src="config.js"></script>
 <script src="app.js"></script>

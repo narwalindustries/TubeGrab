@@ -16,7 +16,25 @@ header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:24px
 #downloadsButton:hover{background:#303030}
 #downloadsButton svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 main{flex:1;padding:24px}
-#status{color:var(--muted);text-align:center;margin:30px}
+#status{color:var(--muted);text-align:center;margin:32px auto;display:flex;align-items:center;justify-content:center;min-height:64px}
+.circle-spinner{
+  width:44px;
+  height:44px;
+  border:3px solid rgba(255,255,255,.12);
+  border-top-color:#ff0033;
+  border-radius:50%;
+  animation:circleSpin .8s linear infinite;
+  margin:20px auto;
+}
+.circle-spinner.circle-spinner-sm{
+  width:26px;
+  height:26px;
+  border-width:2.5px;
+  margin:12px auto;
+}
+@keyframes circleSpin{
+  to{transform:rotate(360deg)}
+}
 .feed-heading{display:flex;align-items:center;justify-content:space-between;margin:0 0 20px}
 .feed-heading h1{font-size:20px;font-weight:600;margin:0}
 #pullRefresh{font-size:12px;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;opacity:0;transition:opacity .2s,transform .2s}
@@ -539,149 +557,7 @@ main{flex:1;padding:24px}
   .player-control-row .video-time{font-size:10px}
 }
 
-/* Server Wakeup / Eco Power-Saving Modal */
-#serverWakeupModal{
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.78);
-  backdrop-filter:blur(12px);
-  -webkit-backdrop-filter:blur(12px);
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  z-index:999;
-  padding:16px;
-}
-#serverWakeupModal[hidden]{display:none !important}
-.server-modal{
-  position:relative;
-  width:min(100%,410px);
-  background:rgba(24,24,27,.98);
-  border:1px solid rgba(255,255,255,.16);
-  border-radius:22px;
-  padding:26px 22px 20px;
-  text-align:center;
-  box-shadow:0 24px 64px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.05);
-  animation:pipPopIn .24s cubic-bezier(0.16,1,0.3,1);
-}
-.server-badge{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
-  background:rgba(56,189,248,.12);
-  color:#38bdf8;
-  border:1px solid rgba(56,189,248,.3);
-  padding:4px 12px;
-  border-radius:14px;
-  font-size:12px;
-  font-weight:600;
-  margin-bottom:14px;
-}
-.server-modal h2{
-  margin:0 0 8px;
-  font-size:19px;
-  font-weight:700;
-  color:#f1f1f1;
-  letter-spacing:-.2px;
-}
-.server-desc{
-  color:#aaa;
-  font-size:13px;
-  line-height:1.5;
-  margin:0 0 16px;
-}
-.server-status-box{
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  gap:8px;
-  background:rgba(255,255,255,.06);
-  border-radius:10px;
-  padding:9px 12px;
-  font-size:12.5px;
-  color:#ccc;
-  margin-bottom:16px;
-}
-.server-pulse-dot{
-  width:9px;
-  height:9px;
-  border-radius:50%;
-  background:#ffa502;
-  box-shadow:0 0 8px #ffa502;
-  animation:pulseDot 1.5s infinite;
-}
-.server-pulse-dot.online{
-  background:#2ed573;
-  box-shadow:0 0 8px #2ed573;
-}
-@keyframes pulseDot{
-  0%{transform:scale(.9);opacity:.7}
-  50%{transform:scale(1.15);opacity:1}
-  100%{transform:scale(.9);opacity:.7}
-}
-.wake-btn{
-  width:100%;
-  display:inline-flex;
-  align-items:center;
-  justify-content:center;
-  gap:10px;
-  background:linear-gradient(135deg,#ff3333,#d90000);
-  color:#fff;
-  border:1px solid #ff4b4b;
-  border-radius:24px;
-  padding:12px 20px;
-  font-size:14.5px;
-  font-weight:700;
-  cursor:pointer;
-  box-shadow:0 4px 16px rgba(255,0,0,.25);
-  transition:transform .16s,box-shadow .16s,background .16s;
-}
-.wake-btn:hover{
-  background:linear-gradient(135deg,#ff4848,#e00000);
-  transform:translateY(-1px);
-  box-shadow:0 6px 20px rgba(255,0,0,.35);
-}
-.wake-btn:disabled{
-  opacity:.5;
-  cursor:not-allowed;
-  transform:none;
-}
-.server-loading-area{margin-top:16px}
-.server-loading-area[hidden]{display:none !important}
-.server-spinner{
-  width:36px;
-  height:36px;
-  margin:0 auto 10px;
-  border:3px solid rgba(255,255,255,.15);
-  border-top-color:#ff3333;
-  border-radius:50%;
-  animation:buffer-spin .8s linear infinite;
-}
-.server-loading-area p{
-  color:#bbb;
-  font-size:12.5px;
-  margin:0 0 10px;
-}
-.server-progress-bar{
-  width:100%;
-  height:4px;
-  background:rgba(255,255,255,.1);
-  border-radius:2px;
-  overflow:hidden;
-}
-.server-progress-fill{
-  width:100%;
-  height:100%;
-  background:linear-gradient(90deg,#ff3333,#ffa502,#2ed573);
-  animation:progressSlide 2s linear infinite;
-}
-@keyframes progressSlide{
-  0%{transform:translateX(-100%)}
-  100%{transform:translateX(100%)}
-}
-.server-footer-note{margin-top:14px;font-size:11.5px}
-.server-footer-note a{color:#777;text-decoration:none}
-.server-footer-note a:hover{color:#bbb;text-decoration:underline}
+
 
 .header-actions{display:flex;align-items:center;gap:10px;flex:none}
 .header-btn{position:relative;display:flex;align-items:center;gap:8px;padding:9px 14px;border:1px solid #383838;border-radius:22px;background:#202020;color:var(--text);font-size:14px;font-weight:600;cursor:pointer;transition:background .18s,border-color .18s}
@@ -689,9 +565,7 @@ main{flex:1;padding:24px}
 .app-highlight-btn{background:linear-gradient(135deg,#ff3333,#cc0000);border-color:#ff4b4b;color:#fff}
 .app-highlight-btn:hover{background:linear-gradient(135deg,#ff4848,#e00000);border-color:#ff6666}
 
-.footer-app-badges{display:flex;gap:12px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}
-.footer-app-btn{display:inline-flex;align-items:center;gap:8px;background:#222;border:1px solid #383838;color:#ddd;padding:8px 14px;border-radius:20px;text-decoration:none;font-size:13px;font-weight:600;transition:background .18s,border-color .18s,color .18s}
-.footer-app-btn:hover{background:#333;border-color:#666;color:#fff}
+
 
 /* App Download Modal */
 .app-modal{position:relative;width:min(100%,480px);background:#1e1e1e;border:1px solid #333;border-radius:18px;padding:24px;box-shadow:0 12px 40px rgba(0,0,0,.7);margin:auto}
