@@ -564,6 +564,37 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
+app.get('/api/debug', async (req, res) => {
+  const binary = resolveBinary('yt-dlp') || YTDLP;
+  let version = '', versionErr = '';
+  try {
+    version = execSync(`"${binary}" --version`, { encoding: 'utf8' }).trim();
+  } catch (e) { versionErr = e.message; }
+
+  let innerStatus = 'pending', innerUrl = '', innerErr = '';
+  try {
+    const yt = await getInnertube();
+    const info = await yt.getBasicInfo('cl0a3i2wFcc', { client: 'ANDROID' });
+    const fmts = info.streaming_data?.formats || [];
+    if (fmts.length) {
+      const f = fmts.find(x => x.itag === 18) || fmts[0];
+      innerUrl = await f.decipher(yt.session.player);
+      innerStatus = 'ok';
+    } else {
+      innerStatus = 'no formats';
+    }
+  } catch (e) {
+    innerStatus = 'error';
+    innerErr = e.message;
+  }
+
+  res.json({
+    deployTime: '2026-10-17-09:46',
+    ytdlp: { path: binary, version, error: versionErr },
+    innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
+  });
+});
+
 // Secret API Key Guard: Enforces authorization if API_SECRET_KEY is set in .env
 app.use('/api', (req, res, next) => {
   if (!API_SECRET_KEY) return next();
