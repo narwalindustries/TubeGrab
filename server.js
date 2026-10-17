@@ -157,7 +157,7 @@ function autoUpdateYtdlp(force = false) {
   lastUpdateCheck = Date.now();
 
   try {
-    const p = spawn(binary, ['-U'], { windowsHide: true });
+    const p = spawn(binary, ['--update-to', 'nightly'], { windowsHide: true });
     let out = '';
     p.stdout?.on('data', d => { out += d; });
     p.stderr?.on('data', d => { out += d; });
@@ -205,8 +205,8 @@ function ensureBinaries() {
       } else {
         // Linux: Standalone binary with bundled Python
         ytdlpUrl = (arch === 'arm64' || arch === 'aarch64')
-          ? 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64'
-          : 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux';
+          ? 'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux_aarch64'
+          : 'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp_linux';
       }
 
       const target = path.join(BIN_DIR, isWin ? 'yt-dlp.exe' : 'yt-dlp');
@@ -215,7 +215,7 @@ function ensureBinaries() {
       } catch (err) {
         if (!isWin) {
           try {
-            await downloadFile('https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp', target);
+            await downloadFile('https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp', target);
           } catch (_) {}
         }
       }
@@ -448,11 +448,11 @@ async function extractWithInnertube(id, maxHeight = 720, videoOnly = false) {
 
 async function getInnertubeInfo(id) {
   const yt = await getInnertube();
-  const clients = ['IOS', 'ANDROID', 'MWEB', 'WEB'];
+  const clients = ['MWEB', 'ANDROID', 'IOS', 'WEB', undefined];
   let info = null;
   for (const client of clients) {
     try {
-      info = await yt.getBasicInfo(id, { client });
+      info = await yt.getBasicInfo(id, client ? { client } : {});
       if (info && info.streaming_data) break;
     } catch (_) {}
   }
@@ -581,7 +581,6 @@ const baseArgs = (noPlaylist = true) => {
     '--no-warnings',
     '--socket-timeout', '10',
     '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=tv,mweb,android,web',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -867,8 +866,8 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
   activeRamJobs.set(cacheKey, job);
 
   const formatStr = videoOnly
-    ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
-    : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
+    ? `bestvideo[height<=${maxHeight}][ext=mp4]/bestvideo[height<=${maxHeight}]/best`
+    : `18/22/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]/best`;
 
   const ytdlpArgs = [
     ...baseArgs(),
@@ -1014,8 +1013,8 @@ app.get('/api/stream/:id', async (req, res) => {
   // 2. If seeking at a non-zero timestamp and not in cache, use direct section stream
   if (start > 0) {
     const formatStr = videoOnly
-      ? `bestvideo[height<=${maxHeight}][vcodec^=avc1]/bestvideo[height<=${maxHeight}]/best`
-      : `bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[ext=m4a]/bestvideo[height<=${maxHeight}][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=${maxHeight}]+bestaudio/18/best[height<=${maxHeight}]/best`;
+      ? `bestvideo[height<=${maxHeight}][ext=mp4]/bestvideo[height<=${maxHeight}]/best`
+      : `18/22/best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]/best`;
     const ytdlpArgs = [
       ...baseArgs(),
       '--buffer-size', '64K',
