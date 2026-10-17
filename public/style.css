@@ -438,9 +438,77 @@ main{flex:1;padding:24px}
 .watch-screen{position:relative;width:100%;height:100%;overflow:auto;background:var(--bg);scrollbar-width:none}
 .watch-screen::-webkit-scrollbar{display:none}
 .watch-header{position:relative;width:100%;min-height:56px;padding:12px 24px;display:flex;align-items:center;justify-content:flex-start;gap:16px;background:var(--bg);border-bottom:1px solid #272727;z-index:5}
-.back-button{display:flex;align-items:center;gap:8px;padding:8px 14px;border:0;border-radius:20px;background:#272727;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background .18s}
-.back-button:hover{background:#383838}
-.back-button span{font-size:20px;line-height:16px}
+.back-button{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:40px;
+  height:40px;
+  min-width:40px;
+  padding:0;
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:50%;
+  background:rgba(255,255,255,.08);
+  color:#fff;
+  cursor:pointer;
+  backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px);
+  transition:all .18s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+  flex-shrink:0;
+}
+.back-button:hover{
+  background:rgba(255,255,255,.2);
+  border-color:rgba(255,255,255,.3);
+  transform:scale(1.06);
+}
+.back-button:active{
+  transform:scale(0.94);
+}
+.back-button svg{
+  width:20px;
+  height:20px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:2.2;
+  stroke-linecap:round;
+  stroke-linejoin:round;
+  pointer-events:none;
+}
+.extracting-state{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  padding:28px 12px;
+  gap:10px;
+  text-align:center;
+}
+.extracting-state p{
+  margin:0;
+  font-size:14px;
+  font-weight:600;
+  color:#fff;
+  letter-spacing:-.2px;
+}
+.extracting-state span{
+  font-size:12px;
+  color:#888;
+}
+.badge-res{
+  display:inline-block;
+  margin-left:6px;
+  padding:1px 5px;
+  border-radius:4px;
+  font-size:10px;
+  font-weight:700;
+  letter-spacing:.3px;
+  vertical-align:middle;
+}
+.badge-8k{background:linear-gradient(135deg,#e02424,#9900ef);color:#fff}
+.badge-4k{background:linear-gradient(135deg,#ff0055,#ff5500);color:#fff}
+.badge-2k{background:#2563eb;color:#fff}
+.badge-hd{background:#374151;color:#e5e7eb}
 .watch-title{display:flex;align-items:center;gap:12px}
 .watch-content{width:100%;max-width:1240px;margin:0 auto;padding:16px 20px 40px}
 .player{position:relative;width:100%;aspect-ratio:16/9;max-height:calc(100vh - 140px);background:#000;border-radius:12px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.6)}

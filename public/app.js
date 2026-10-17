@@ -537,7 +537,7 @@ function openDownload(id, title) {
   $('#dlModal').hidden = false;
 
   const defaultVideo = [
-    { height: 1080, label: '1080p (HD)', size: null },
+    { height: 1080, label: '1080p', size: null },
     { height: 720, label: '720p', size: null },
     { height: 480, label: '480p', size: null },
     { height: 360, label: '360p', size: null },
@@ -550,13 +550,30 @@ function openDownload(id, title) {
     { q: 'opus', label: 'OPUS · Best quality' },
   ];
 
+  const formatBadge = (h) => {
+    if (h >= 4320) return '<span class="badge-res badge-8k">8K UHD</span>';
+    if (h >= 2160) return '<span class="badge-res badge-4k">4K UHD</span>';
+    if (h >= 1440) return '<span class="badge-res badge-2k">2K QHD</span>';
+    if (h >= 1080) return '<span class="badge-res badge-hd">HD</span>';
+    return '';
+  };
+
+  const cleanLabel = (v) => {
+    const raw = String(v.label || `${v.height}p`);
+    return raw.replace(/\s*\((?:8K|4K|2K|HD)\)/gi, '').trim();
+  };
+
   const renderFormats = (vidFormats, audFormats, curTitle) => {
     $('#dTitle').textContent = curTitle;
-    const optBtn = (kind, q, label, size) => `<button class="opt" data-kind="${kind}" data-q="${q}"><span>${label}</span><small>${fmtSize(size)}</small></button>`;
+    const optBtn = (kind, q, label, size, badge = '') => `
+      <button class="opt" data-kind="${kind}" data-q="${q}">
+        <span>${esc(label)}${badge}</span>
+        <small>${fmtSize(size)}</small>
+      </button>`;
     const body = $('#dBody');
     body.innerHTML = `
       <div class="tabs"><button class="tab on" data-tab="video">🎬 Video (MP4)</button><button class="tab" data-tab="audio">🎵 Audio</button></div>
-      <div class="opts" id="tab-video" style="display:grid">${vidFormats.map(v => optBtn('video', v.height, v.label, v.size)).join('')}</div>
+      <div class="opts" id="tab-video" style="display:grid">${vidFormats.map(v => optBtn('video', v.height, cleanLabel(v), v.size, formatBadge(v.height))).join('')}</div>
       <div class="opts" id="tab-audio" hidden style="display:none">${audFormats.map(a => optBtn('audio', a.q, a.label)).join('')}</div>
       <div id="prog"></div>`;
     body.querySelectorAll('.tab').forEach(t => t.onclick = () => {
@@ -575,17 +592,26 @@ function openDownload(id, title) {
     body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, curTitle, b.dataset.kind, b.dataset.q));
   };
 
-  // Instant render: formats appear immediately (0ms delay)
-  renderFormats(defaultVideo, defaultAudio, resolvedTitle);
+  // Show extraction loading spinner while analyzing real formats
+  const body = $('#dBody');
+  body.innerHTML = `
+    <div class="extracting-state">
+      <div class="circle-spinner" style="width:36px;height:36px;border-width:3px;margin:12px auto 6px;"></div>
+      <p>Extracting stream formats…</p>
+      <span>Analyzing video resolutions up to 8K / 4K UHD</span>
+    </div>`;
 
-  // Background enrich without blocking user
+  // Fetch real formats
   api('/api/info?id=' + encodeURIComponent(id)).then(info => {
     if ($('#dlModal').hidden) return;
     const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
     const vidFormats = (info.video && info.video.length) ? info.video : defaultVideo;
     const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
     renderFormats(vidFormats, audFormats, t);
-  }).catch(() => {});
+  }).catch(() => {
+    if ($('#dlModal').hidden) return;
+    renderFormats(defaultVideo, defaultAudio, resolvedTitle);
+  });
 }
 
 async function startJob(id, title, kind, q) {

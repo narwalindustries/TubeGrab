@@ -469,7 +469,7 @@ async function getInnertubeInfo(id) {
     }
   }
   const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
-    height: h, label: h + 'p' + (h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
+    height: h, label: h + 'p' + (h >= 4320 ? ' (8K)' : h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
     size: s ? Number(s) : null,
   }));
   const playbackQualities = [...byHeight.keys()].sort((a, b) => b - a);
@@ -610,9 +610,7 @@ app.use('/api', (req, res, next) => {
 const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
-    '--socket-timeout', '15',
-    '--js-runtimes', 'node',
-    '--extractor-args', 'youtube:player_client=android,mweb',
+    '--socket-timeout', '20',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -812,7 +810,7 @@ app.get('/api/info', async (req, res) => {
         byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, size));
       }
       const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
-        height: h, label: h + 'p' + (h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
+        height: h, label: h + 'p' + (h >= 4320 ? ' (8K)' : h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
         size: s ? s + audioSize : null,
       }));
       const playableFormats = fmts.filter(f => f.ext === 'mp4' && f.height
