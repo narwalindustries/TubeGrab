@@ -320,24 +320,39 @@ function unmutePlayer() {
   $('#muteToggle').setAttribute('title', 'Mute');
 }
 
+function switchToEmbedPlayer(id) {
+  if (!id) return;
+  const video = $('#playerVideo');
+  try { video.pause(); } catch (_) {}
+  video.hidden = true;
+  hideBuffering();
+  $('#playerError').hidden = true;
+  $('#ramStatusBadge').textContent = '⚡ Web Player';
+
+  let iframe = $('#playerIframe');
+  if (!iframe) {
+    iframe = document.createElement('iframe');
+    iframe.id = 'playerIframe';
+    iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+    iframe.setAttribute('allowfullscreen', 'true');
+    iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:12px;position:absolute;top:0;left:0;z-index:2;';
+    $('#playerContainer').appendChild(iframe);
+  }
+  iframe.hidden = false;
+  iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+  playerReady = true;
+  updateQueueControls();
+}
+
 function showPlayerError(message) {
+  if (activeVideoId) {
+    switchToEmbedPlayer(activeVideoId);
+    return;
+  }
   hideBuffering();
   showControls();
   const error = $('#playerError');
   error.replaceChildren(document.createTextNode(`${message} `));
-  const retryBtn = document.createElement('button');
-  retryBtn.type = 'button';
-  retryBtn.className = 'retry-download';
-  retryBtn.style.margin = '8px auto';
-  retryBtn.textContent = '🔄 Retry Playback';
-  retryBtn.onclick = () => loadPlayerVideo(activeVideoId, 0, true);
-  error.appendChild(retryBtn);
-  const link = document.createElement('a');
-  link.href = `https://www.youtube.com/watch?v=${activeVideoId}`;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  link.textContent = 'Open on YouTube';
-  error.appendChild(link);
   error.hidden = false;
   updateQueueControls();
 }
@@ -411,7 +426,13 @@ function setVideoSource(id, start = 0, autoplay = true) {
 }
 
 function loadPlayerVideo(id, start = 0, autoplay = true) {
+  const iframe = $('#playerIframe');
+  if (iframe) {
+    iframe.src = '';
+    iframe.hidden = true;
+  }
   const video = $('#playerVideo');
+  video.hidden = false;
   playerReady = false;
   streamStartOffset = start;
   clearTimeout(ramPollTimer);
@@ -428,7 +449,7 @@ function loadPlayerVideo(id, start = 0, autoplay = true) {
     return;
   }
 
-  // Pre-buffer in RAM before launching playback
+  // Pre-buffer before launching playback
   updateRamBadge('checking');
   api(`/api/preload/${encodeURIComponent(id)}?quality=${encodeURIComponent(playerQuality)}`).then(res => {
     if (activeVideoId !== id) return;
@@ -436,38 +457,10 @@ function loadPlayerVideo(id, start = 0, autoplay = true) {
       updateRamBadge('ready');
       setVideoSource(id, 0, autoplay);
     } else {
-      updateRamBadge('buffering', res.totalBytes);
-      showBuffering('Loading into RAM…');
-
-      let attempts = 0;
-      const waitForSafeBuffer = () => {
-        if (activeVideoId !== id) return;
-        api(`/api/preload/status/${encodeURIComponent(id)}?quality=${encodeURIComponent(playerQuality)}`).then(st => {
-          if (activeVideoId !== id) return;
-          attempts++;
-          const safeBytes = 1.8 * 1024 * 1024;
-          const isSafe = st.cached || st.status === 'ready' || (st.totalBytes && st.totalBytes >= safeBytes) || attempts >= 7;
-          if (isSafe) {
-            if (st.cached || st.status === 'ready') updateRamBadge('ready');
-            else {
-              updateRamBadge('buffering', st.totalBytes);
-              pollRamUntilReady(id, playerQuality);
-            }
-            setVideoSource(id, 0, autoplay);
-          } else {
-            updateRamBadge('buffering', st.totalBytes);
-            const mb = ((st.totalBytes || 0) / 1024 / 1024).toFixed(1);
-            showBuffering(`Buffering to RAM (${mb} MB)…`);
-            setTimeout(waitForSafeBuffer, 250);
-          }
-        }).catch(() => {
-          setVideoSource(id, 0, autoplay);
-        });
-      };
-      setTimeout(waitForSafeBuffer, 200);
+      setVideoSource(id, 0, autoplay);
     }
   }).catch(() => {
-    setVideoSource(id, 0, autoplay);
+    switchToEmbedPlayer(id);
   });
 }
 
@@ -570,7 +563,7 @@ $('#playerVideo').addEventListener('error', () => {
   hideBuffering();
   const mediaError = $('#playerVideo').error;
   if (!mediaError || mediaError.code === MediaError.MEDIA_ERR_ABORTED || $('#playerModal').hidden) return;
-  showPlayerError('Playback error occurred. Click Retry to reload.');
+  switchToEmbedPlayer(activeVideoId);
 });
 $('#playerVideo').addEventListener('click', event => {
   if (event.target === $('#playerVideo')) {
@@ -620,27 +613,28 @@ function openPlayer(id, title, duration = 0) {
   $('#playerModal').hidden = false;
   document.body.classList.add('player-open');
   renderRelatedVideos();
-  if (duration) {
-    loadPlayerVideo(id);
-  } else {
+  loadPlayerVideo(id);
+
+  if (!title) {
     api(`/api/info?id=${encodeURIComponent(id)}`).then(info => {
       if (activeVideoId !== id) return;
-      $('#pTitle').textContent = info.title;
-      $('#pDl').onclick = () => openDownload(id, info.title);
-      activeDuration = info.duration || 0;
-      loadPlayerVideo(id);
-    }).catch(error => {
-      if (activeVideoId === id) {
-        showPlayerError(`Could not load video: ${error.message}`);
-      }
-    });
+      if (info.title && info.title !== 'YouTube Video') $('#pTitle').textContent = info.title;
+      $('#pDl').onclick = () => openDownload(id, info.title || title);
+      activeDuration = info.duration || activeDuration || 0;
+    }).catch(() => {});
   }
 }
 function closeModal(m) {
   m.hidden = true;
   if (m.id === 'playerModal') {
     document.body.classList.remove('player-open');
+    const iframe = $('#playerIframe');
+    if (iframe) {
+      iframe.src = '';
+      iframe.hidden = true;
+    }
     const video = $('#playerVideo');
+    video.hidden = false;
     clearTimeout(ramPollTimer);
     clearTimeout(stallWatchdog);
     hideBuffering();
@@ -970,14 +964,14 @@ $('#downloadsList').addEventListener('click', async event => {
 async function openDownload(id, title) {
   const body = $('#dBody'); $('#dTitle').textContent = title || 'Download';
   $('#dlModal').hidden = false; body.innerHTML = '<p>Loading available formats…</p>';
-  try {
-    const info = await api('/api/info?id=' + id);
-    $('#dTitle').textContent = info.title;
+
+  const renderFormats = (vidFormats, audFormats, resolvedTitle) => {
+    $('#dTitle').textContent = resolvedTitle;
     const optBtn = (kind, q, label, size) => `<button class="opt" data-kind="${kind}" data-q="${q}"><span>${label}</span><small>${fmtSize(size)}</small></button>`;
     body.innerHTML = `
       <div class="tabs"><button class="tab on" data-tab="video">🎬 Video (MP4)</button><button class="tab" data-tab="audio">🎵 Audio</button></div>
-      <div class="opts" id="tab-video" style="display:grid">${info.video.map(v => optBtn('video', v.height, v.label, v.size)).join('')}</div>
-      <div class="opts" id="tab-audio" hidden style="display:none">${info.audio.map(a => optBtn('audio', a.q, a.label)).join('')}</div>
+      <div class="opts" id="tab-video" style="display:grid">${vidFormats.map(v => optBtn('video', v.height, v.label, v.size)).join('')}</div>
+      <div class="opts" id="tab-audio" hidden style="display:none">${audFormats.map(a => optBtn('audio', a.q, a.label)).join('')}</div>
       <div id="prog"></div>`;
     body.querySelectorAll('.tab').forEach(t => t.onclick = () => {
       body.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
@@ -992,8 +986,32 @@ async function openDownload(id, title) {
         aEl.style.display = isVid ? 'none' : 'grid';
       }
     });
-    body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, info.title, b.dataset.kind, b.dataset.q));
-  } catch (e) { body.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, resolvedTitle, b.dataset.kind, b.dataset.q));
+  };
+
+  const defaultVideo = [
+    { height: 1080, label: '1080p (HD)', size: null },
+    { height: 720, label: '720p', size: null },
+    { height: 480, label: '480p', size: null },
+    { height: 360, label: '360p', size: null },
+  ];
+  const defaultAudio = [
+    { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+    { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+    { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+    { q: 'm4a', label: 'M4A · Best (AAC)' },
+    { q: 'opus', label: 'OPUS · Best quality' },
+  ];
+
+  try {
+    const info = await api('/api/info?id=' + id);
+    const resolvedTitle = (info.title && info.title !== 'YouTube Video') ? info.title : (title || 'YouTube Video');
+    const vidFormats = (info.video && info.video.length) ? info.video : defaultVideo;
+    const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
+    renderFormats(vidFormats, audFormats, resolvedTitle);
+  } catch (_) {
+    renderFormats(defaultVideo, defaultAudio, title || 'YouTube Video');
+  }
 }
 
 async function startJob(id, title, kind, q) {
