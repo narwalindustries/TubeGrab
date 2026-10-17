@@ -437,67 +437,14 @@ main{flex:1;padding:24px}
 }
 .watch-screen{position:relative;width:100%;height:100%;overflow:auto;background:var(--bg);scrollbar-width:none}
 .watch-screen::-webkit-scrollbar{display:none}
-.watch-header{position:absolute;top:0;right:0;left:0;z-index:5;min-height:68px;padding:10px 24px;display:grid;grid-template-columns:1fr minmax(0,3fr) 1fr;align-items:center;gap:16px;background:linear-gradient(#080808b8,transparent);border:0}
-.back-button{justify-self:start;display:flex;align-items:center;gap:8px;padding:8px 12px;border:0;border-radius:20px;background:#272727;color:#fff;font-size:14px;cursor:pointer}
-.back-button span{font-size:22px;line-height:16px}
-.watch-title{min-width:0;display:flex;align-items:center;gap:16px}
-.watch-title .logo{flex:none}
-.watch-title h1{overflow:hidden;margin:0;font-size:18px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}
-.watch-header-actions{justify-self:end;display:flex;align-items:center;gap:10px}
-.watch-downloads-btn{position:relative;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid rgba(255,255,255,.18);border-radius:50%;background:rgba(255,255,255,.08);color:#eee;cursor:pointer;backdrop-filter:blur(8px);transition:all .18s ease}
-.watch-downloads-btn:hover{background:rgba(255,255,255,.2);color:#fff}
-.watch-downloads-btn svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.ram-badge{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border-radius:16px;background:rgba(255,255,255,.07);color:#bbb;font-size:12px;font-weight:600;letter-spacing:.2px;border:1px solid rgba(255,255,255,.18);backdrop-filter:blur(8px);transition:all .2s ease;white-space:nowrap}
-.ram-badge.buffering{color:#ffd36a;border-color:rgba(255,211,106,.38);background:rgba(255,211,106,.12);animation:ramPulse 1.8s infinite alternate}
-.ram-badge.ready{color:#71dda0;border-color:rgba(113,221,160,.45);background:rgba(113,221,160,.14);box-shadow:0 0 12px rgba(113,221,160,.18)}
-@keyframes ramPulse{from{opacity:.85}to{opacity:1}}
-.unmute-overlay{position:absolute;top:80px;left:24px;z-index:6;display:flex;align-items:center;gap:8px;padding:9px 18px;background:rgba(0,0,0,.82);border:1px solid rgba(255,255,255,.35);border-radius:24px;color:#fff;font-size:13px;font-weight:600;cursor:pointer;backdrop-filter:blur(8px);transition:transform .18s ease,background .18s ease}
-.unmute-overlay:hover{background:rgba(255,0,51,.9);transform:scale(1.04)}
-.unmute-overlay[hidden]{display:none}
-.watch-content{width:100%;margin:0;padding:0 0 32px}
-.player{position:relative;width:100%;height:100dvh;min-height:280px;background:#000;border-radius:0;overflow:hidden}
-.player #playerVideo{display:block;width:100%;height:100%;border:0;background:#000;object-fit:contain}
-.player-controls{position:absolute;z-index:2;right:0;bottom:0;left:0;padding:46px 16px 10px;background:linear-gradient(transparent,rgba(0,0,0,.56));color:#fff;opacity:1;transform:translateY(0);transition:opacity .24s ease,transform .24s ease}
-.player.controls-hidden .player-controls{opacity:0;transform:translateY(14px);pointer-events:none}
-.player-control-row{display:flex;align-items:center;gap:12px;min-height:46px;padding:4px 10px;border-radius:28px;background:rgba(35,35,35,.48);backdrop-filter:blur(12px)}
-.control-group{display:flex;align-items:center;gap:9px}
-.player-control-row button{display:grid;place-items:center;flex:none;width:40px;height:40px;border:0;border-radius:50%;background:transparent;color:#fff;font-size:20px;cursor:pointer}
-.player-control-row button:hover:not(:disabled){background:#ffffff30}
-.player-control-row button:disabled{opacity:.45;cursor:default}
-.player-control-row .video-time{font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
-.player-control-row #volumeBar{--volume-level:100%;appearance:none;width:88px;height:4px;border-radius:6px;background:linear-gradient(to right,#fff var(--volume-level),#ffffff55 var(--volume-level));cursor:pointer}
-#volumeBar::-webkit-slider-thumb{appearance:none;width:12px;height:12px;border-radius:50%;background:#fff}
-#volumeBar::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:#fff}
-#fullscreenButton svg{display:block;width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.settings-wrap{position:relative}
-.player-settings{position:absolute;right:0;bottom:54px;width:238px;padding:16px;border:1px solid #ffffff16;border-radius:14px;background:rgba(24,24,24,.94);box-shadow:0 12px 34px #0009;backdrop-filter:blur(16px)}
-.player-settings[hidden]{display:none}
-.settings-section+.settings-section{margin-top:18px;padding-top:16px;border-top:1px solid #ffffff1a}
-.settings-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
-.settings-heading span:first-child{font-size:14px;font-weight:600}
-.settings-heading span:last-child{color:#bbb;font-size:12px}
-.quality-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;max-height:126px;overflow:auto}
-.quality-options button{width:100%;height:34px;justify-content:center;padding:0 6px;border-radius:8px;background:#ffffff0d;font-size:13px}
-.quality-options button.selected{background:#ff0033;color:#fff}
-.quality-options button.selected::after{content:"✓";margin-left:5px}
-.speed-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
-.speed-options button{width:100%;height:34px;justify-content:center;padding:0 6px;border-radius:8px;background:#ffffff0d;font-size:13px}
-.speed-options button.selected{background:#ff0033;color:#fff}
-.speed-options button.selected::after{content:"✓";margin-left:5px}
-.settings-wrap #settingsButton{gap:4px;width:auto;min-width:44px;padding:0 7px}
-.settings-wrap #currentSpeed{font-size:11px;font-weight:600}
-.settings-wrap #settingsButton svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-.buffering-indicator{position:absolute;z-index:4;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#0002;color:#fff;font-size:14px;font-weight:600;pointer-events:none;text-shadow:0 1px 4px #000}
-.buffering-indicator[hidden]{display:none}
-.buffer-spinner{width:52px;height:52px;border:4px solid #ffffff55;border-top-color:#ff0033;border-radius:50%;animation:buffer-spin .8s linear infinite}
-@keyframes buffer-spin{to{transform:rotate(360deg)}}
-.control-spacer{flex:1}
-.player-error{position:absolute;z-index:3;inset:0;display:grid;place-content:center;gap:10px;padding:24px;background:#181818;color:#ffb3b3;text-align:center;pointer-events:none}
-.player-error[hidden]{display:none}
-.player-error a{color:#fff;pointer-events:auto}
-.buffering-indicator{z-index:5}
-.player:fullscreen{width:100vw;height:100dvh;max-width:none;aspect-ratio:auto;border-radius:0}
-.player:fullscreen #playerVideo{object-fit:contain}
+.watch-header{position:relative;width:100%;min-height:56px;padding:12px 24px;display:flex;align-items:center;justify-content:flex-start;gap:16px;background:var(--bg);border-bottom:1px solid #272727;z-index:5}
+.back-button{display:flex;align-items:center;gap:8px;padding:8px 14px;border:0;border-radius:20px;background:#272727;color:#fff;font-size:14px;font-weight:500;cursor:pointer;transition:background .18s}
+.back-button:hover{background:#383838}
+.back-button span{font-size:20px;line-height:16px}
+.watch-title{display:flex;align-items:center;gap:12px}
+.watch-content{width:100%;max-width:1240px;margin:0 auto;padding:16px 20px 40px}
+.player{position:relative;width:100%;aspect-ratio:16/9;max-height:calc(100vh - 140px);background:#000;border-radius:12px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.player iframe,#playerIframe{display:block;width:100%;height:100%;border:0;background:#000}
 .pbar{display:flex;gap:16px;align-items:center;justify-content:flex-end;padding:12px 0 22px;border-bottom:1px solid #303030}
 .related-section{padding-top:20px}
 .related-section h2{margin:0 0 14px;font-size:19px}
