@@ -884,7 +884,7 @@ function startRamBufferJob(cacheKey, id, maxHeight, videoOnly) {
     '-map', '0:v:0',
   ];
   if (!videoOnly) {
-    ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'copy', '-bsf:a', 'aac_adtstoasc', '-max_muxing_queue_size', '4096');
+    ffmpegArgs.push('-map', '0:a:0?', '-c:a', 'aac', '-max_muxing_queue_size', '4096');
   } else {
     ffmpegArgs.push('-an');
   }
@@ -1034,8 +1034,7 @@ app.get('/api/stream/:id', async (req, res) => {
     if (!videoOnly) {
       ffmpegArgs.push(
         '-map', '0:a:0?',
-        '-c:a', 'copy',
-        '-bsf:a', 'aac_adtstoasc',
+        '-c:a', 'aac',
         '-max_muxing_queue_size', '4096'
       );
     } else {
