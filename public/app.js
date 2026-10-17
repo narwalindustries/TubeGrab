@@ -324,11 +324,18 @@ function switchToEmbedPlayer(id) {
   if (!id) return;
   clearTimeout(playerFallbackTimer);
   const video = $('#playerVideo');
-  try { video.pause(); } catch (_) {}
+  try {
+    video.pause();
+    video.removeAttribute('data-loaded-src');
+    video.removeAttribute('src');
+    video.load();
+  } catch (_) {}
   video.hidden = true;
   hideBuffering();
   $('#playerError').hidden = true;
   $('#ramStatusBadge').textContent = '⚡ Web Player';
+  const playerControls = $('.player-controls');
+  if (playerControls) playerControls.hidden = true;
 
   let iframe = $('#playerIframe');
   if (!iframe) {
@@ -336,7 +343,7 @@ function switchToEmbedPlayer(id) {
     iframe.id = 'playerIframe';
     iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
     iframe.setAttribute('allowfullscreen', 'true');
-    iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:12px;position:absolute;top:0;left:0;z-index:2;';
+    iframe.style.cssText = 'width:100%;height:100%;border:none;border-radius:12px;position:absolute;top:0;left:0;z-index:10;';
     $('#playerContainer').appendChild(iframe);
   }
   iframe.hidden = false;
@@ -437,6 +444,8 @@ function loadPlayerVideo(id, start = 0, autoplay = true) {
   }
   const video = $('#playerVideo');
   video.hidden = false;
+  const playerControls = $('.player-controls');
+  if (playerControls) playerControls.hidden = false;
   playerReady = false;
   streamStartOffset = start;
   clearTimeout(ramPollTimer);
@@ -490,10 +499,14 @@ $('#playerVideo').addEventListener('timeupdate', () => {
   updatePlayerControls();
 });
 function showBuffering(text) {
+  const iframe = $('#playerIframe');
+  if (iframe && !iframe.hidden) return;
   clearTimeout(bufferingTimer);
   const label = $('#bufferStatusText');
   if (label && text) label.textContent = text;
   bufferingTimer = setTimeout(() => {
+    const activeIframe = $('#playerIframe');
+    if (activeIframe && !activeIframe.hidden) return;
     if (!$('#playerModal').hidden) $('#bufferingIndicator').hidden = false;
   }, 120);
 }
@@ -646,6 +659,8 @@ function closeModal(m) {
     }
     const video = $('#playerVideo');
     video.hidden = false;
+    const playerControls = $('.player-controls');
+    if (playerControls) playerControls.hidden = false;
     clearTimeout(playerFallbackTimer);
     clearTimeout(ramPollTimer);
     clearTimeout(stallWatchdog);
