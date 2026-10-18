@@ -131,10 +131,6 @@ async function api(url, opts = {}) {
   if (key) {
     headers['x-api-key'] = key;
   }
-  const userCookies = localStorage.getItem('tubegrab_yt_cookies');
-  if (userCookies) {
-    headers['x-yt-cookies'] = userCookies;
-  }
   options.headers = headers;
   const r = await fetch(fullUrl, options);
   const d = await r.json().catch(() => ({}));
@@ -474,10 +470,7 @@ function renderDownloads(jobs) {
           ? 'Ready to save'
           : esc((() => {
               const e = job.error || '';
-              if (/failed to extract any player response/i.test(e)) {
-                return 'YouTube blocked cloud server IP. Use TubeGrab Desktop/Local App or configure YT_COOKIES_CONTENT in Render.';
-              }
-              return e.replace(/^ERROR:\s*\[[^\]]+\]\s*/i, '').slice(0, 140) || 'Download failed';
+              return e.replace(/^ERROR:\s*\[[^\]]+\]\s*/i, '').slice(0, 140) || 'Download failed. Click Retry.';
             })());
     const action = done
       ? `<a class="download-file" href="${resolveUrl(`/api/jobs/${encodeURIComponent(job.id)}/file`)}" download="${esc(job.filename || '')}">Download file</a>`
@@ -688,11 +681,10 @@ async function startJob(id, title, kind, q) {
   const prog = $('#prog');
   prog.innerHTML = '<p style="color:#71dda0;margin:6px 0 0;font-weight:600;">Connecting to processing engine…</p>';
   try {
-    const userCookies = localStorage.getItem('tubegrab_yt_cookies') || '';
     const res = await api('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title, kind, q, cookies: userCookies }),
+      body: JSON.stringify({ id, title, kind, q }),
     });
     if (res.jobId) {
       pendingAutoDownloads.add(res.jobId);
@@ -713,126 +705,7 @@ async function startJob(id, title, kind, q) {
   }
 }
 
-// ---------- Cookie Management Logic ----------
-function updateCookieUI() {
-  const userCookies = localStorage.getItem('tubegrab_yt_cookies');
-  const hasCookies = Boolean(userCookies && userCookies.trim().length > 10);
-  
-  const b1 = $('#cookiesButton');
-  const b2 = $('#pCookiesButton');
-  const l1 = $('#cookiesStatusLabel');
-  const l2 = $('#pCookiesStatusLabel');
-  const badge = $('#cookiesActiveBadge');
 
-  if (hasCookies) {
-    if (b1) b1.classList.add('cookies-connected');
-    if (b2) b2.classList.add('cookies-connected');
-    if (l1) l1.textContent = 'Cookies ✓';
-    if (l2) l2.textContent = 'Cookies ✓';
-    if (badge) {
-      badge.textContent = '✅ Connected: TubeGrab is using your browser YouTube session';
-      badge.classList.add('connected');
-    }
-  } else {
-    if (b1) b1.classList.remove('cookies-connected');
-    if (b2) b2.classList.remove('cookies-connected');
-    if (l1) l1.textContent = 'Cookies';
-    if (l2) l2.textContent = 'Cookies';
-    if (badge) {
-      badge.textContent = '⚪ No personal cookies connected (Downloads use public engines)';
-      badge.classList.remove('connected');
-    }
-  }
-}
-
-function openCookiesModal() {
-  const m = $('#cookiesModal');
-  if (!m) return;
-  m.hidden = false;
-  updateCookieUI();
-  const input = $('#cookiesInput');
-  if (input) {
-    input.value = localStorage.getItem('tubegrab_yt_cookies') || '';
-  }
-  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-  const desktopSec = $('#desktopCookieSection');
-  if (desktopSec) {
-    desktopSec.hidden = !isLocal;
-  }
-}
-
-function saveCookies() {
-  const input = $('#cookiesInput');
-  const val = (input?.value || '').trim();
-  if (val.length < 5) {
-    alert('Please enter or paste valid cookie text first.');
-    return;
-  }
-  localStorage.setItem('tubegrab_yt_cookies', val);
-  updateCookieUI();
-  alert('YouTube browser cookies saved! Your downloads will now use your session.');
-  closeModal($('#cookiesModal'));
-}
-
-function clearCookies() {
-  localStorage.removeItem('tubegrab_yt_cookies');
-  const input = $('#cookiesInput');
-  if (input) input.value = '';
-  updateCookieUI();
-  alert('YouTube cookies cleared.');
-}
-
-function handleCookieFileUpload(e) {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    const text = event.target?.result;
-    if (typeof text === 'string' && text.trim().length > 10) {
-      localStorage.setItem('tubegrab_yt_cookies', text.trim());
-      const input = $('#cookiesInput');
-      if (input) input.value = text.trim();
-      updateCookieUI();
-      alert(`Loaded ${file.name}! Your downloads will now use these cookies.`);
-    } else {
-      alert('The uploaded file appears to be empty or invalid.');
-    }
-  };
-  reader.readAsText(file);
-}
-
-async function syncDesktopCookies() {
-  const select = $('#desktopBrowserSelect');
-  const browser = select?.value || 'chrome';
-  const btn = $('#syncDesktopCookiesBtn');
-  if (btn) {
-    btn.disabled = true;
-    btn.textContent = 'Extracting…';
-  }
-  try {
-    const res = await api('/api/sync-browser-cookies', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ browser })
-    });
-    alert(res.message || `Successfully linked cookies from ${browser}!`);
-    updateCookieUI();
-  } catch (err) {
-    alert('Could not extract cookies automatically: ' + err.message + '\n\nTip: Use Method 1 to paste cookies directly.');
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = 'Extract from Browser';
-    }
-  }
-}
-
-$('#cookiesButton')?.addEventListener('click', openCookiesModal);
-$('#pCookiesButton')?.addEventListener('click', openCookiesModal);
-$('#saveCookiesBtn')?.addEventListener('click', saveCookies);
-$('#clearCookiesBtn')?.addEventListener('click', clearCookies);
-$('#cookieFileInput')?.addEventListener('change', handleCookieFileUpload);
-$('#syncDesktopCookiesBtn')?.addEventListener('click', syncDesktopCookies);
 
 const handleSearchSubmit = (inputEl) => {
   const v = (inputEl?.value || '').trim();
@@ -872,7 +745,6 @@ $('#getAppButton')?.addEventListener('click', openAppModal);
 $('#pGetAppButton')?.addEventListener('click', openAppModal);
 
 async function boot() {
-  updateCookieUI();
   loadResults(true);
   refreshDownloads();
   if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');

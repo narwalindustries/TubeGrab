@@ -751,12 +751,16 @@ app.use('/api', (req, res, next) => {
 const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
-    '--socket-timeout', '20',
-    '--js-runtimes', 'node',
+    '-4',
+    '--socket-timeout', '30',
+    '--js-runtimes', 'deno,node',
+    '--impersonate', 'chrome',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
   if (cookiePath) a.push('--cookies', cookiePath);
+  const proxy = process.env.YTDLP_PROXY || process.env.HTTP_PROXY || process.env.HTTPS_PROXY;
+  if (proxy) a.push('--proxy', proxy);
   return a;
 };
 
@@ -1279,6 +1283,63 @@ function isTransientDownloadError(message) {
   return /(temporary|timed?\s*out|timeout|connection|network|resolve|dns|name or service not known|temporary failure|http error 5\d\d|http error 429|giving up after \d+ retries|failed to extract|unable to extract|player response|n challenge)/i.test(message);
 }
 
+async function downloadViaInnertube(jobId, job) {
+  try {
+    job.stage = 'Trying emergency fallback engine…';
+    const isAudio = job.kind === 'audio';
+    const maxHeight = parseInt(job.quality, 10) || 720;
+    const urls = await extractWithInnertube(job.videoId, maxHeight, false);
+    if (!urls || !urls.length) throw new Error('No streams available from alternative engine');
+
+    const vUrl = urls[0];
+    const aUrl = urls[1] || null;
+    const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG || 'ffmpeg';
+    const targetFile = isAudio ? 'audio.mp3' : 'video.mp4';
+    const targetPath = path.join(job.dir, targetFile);
+
+    const ffArgs = ['-y'];
+    ffArgs.push('-i', vUrl);
+    if (aUrl) ffArgs.push('-i', aUrl);
+    if (isAudio) {
+      ffArgs.push('-c:a', 'libmp3lame', '-b:a', '192k', targetPath);
+    } else {
+      ffArgs.push('-c', 'copy', targetPath);
+    }
+
+    const ff = spawn(ffmpegBin, ffArgs, { windowsHide: true });
+    job.process = ff;
+    ff.on('close', code => {
+      if (code === 0 && fs.existsSync(targetPath) && fs.statSync(targetPath).size > 1000) {
+        job.status = 'done';
+        job.progress = 100;
+        job.stage = 'Completed';
+        job.file = targetFile;
+        job.completed = Date.now();
+        dispatchNextQueuedJob();
+      } else {
+        job.status = 'error';
+        job.stage = 'Failed';
+        job.error = job.lastError || 'Download failed after all engine attempts';
+        job.completed = Date.now();
+        dispatchNextQueuedJob();
+      }
+    });
+    ff.on('error', () => {
+      job.status = 'error';
+      job.stage = 'Failed';
+      job.error = job.lastError || 'Download failed after all engine attempts';
+      job.completed = Date.now();
+      dispatchNextQueuedJob();
+    });
+  } catch (innertubeErr) {
+    job.status = 'error';
+    job.stage = 'Failed';
+    job.error = job.lastError || innertubeErr.message || 'Download failed';
+    job.completed = Date.now();
+    dispatchNextQueuedJob();
+  }
+}
+
 async function startDownloadAttempt(jobId, job, attempt = 1) {
   job.status = 'running';
   job.attempt = attempt;
@@ -1323,14 +1384,8 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
       }, delay);
       return;
     }
-    if (/extractor|signature|player|cipher|confirm you’re not a bot|login|unable to extract/i.test(err)) {
-      autoUpdateYtdlp(true);
-    }
-    job.status = 'error';
-    job.stage = 'Failed';
-    job.error = message;
-    job.completed = Date.now();
-    dispatchNextQueuedJob();
+    // Attempt emergency Innertube rescue before marking job failed
+    return downloadViaInnertube(jobId, job);
   };
 
   await ensureBinaries();
@@ -1338,19 +1393,19 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ffmpegDir = getFfmpegDir();
 
   // Multi-Engine Sequence:
-  // 1. visionos (Apple Vision Pro backend - full 8K/4K/1080p, completely bypasses SABR)
-  // 2. android (Mobile stream - format 18 / best universal fallback)
-  // 3. visionos,android (Combined VisionOS + Android)
-  // 4. mweb (Mobile web)
-  // 5. web (Desktop web)
+  // 1. tv_samsung,visionos,web (Comprehensive: TV + VisionOS + Web with automated JS challenge solving)
+  // 2. tv_samsung,web_embedded (Embedded TV - completely bypasses web bot challenge)
+  // 3. android (Mobile stream - format 18 / universal mobile DASH)
+  // 4. ios,mweb (Apple mobile & mobile web APIs)
+  // 5. web_safari,web (Safari browser client)
   const clientFallbacks = [
-    'visionos',
+    'tv_samsung,visionos,web',
+    'tv_samsung,web_embedded',
     'android',
-    'visionos,android',
-    'mweb',
-    'web'
+    'ios,mweb',
+    'web_safari,web'
   ];
-  const clientChoice = clientFallbacks[attempt - 1] || 'visionos';
+  const clientChoice = clientFallbacks[attempt - 1] || 'tv_samsung,visionos,web';
   const formatArgs = (attempt > 1 && job.kind === 'video')
     ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b[height<=${parseInt(job.quality, 10) || 1080}]/18/b/best`, '--merge-output-format', 'mp4']
     : job.args;
