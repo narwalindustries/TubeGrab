@@ -676,7 +676,7 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-17-09:46',
+    deployTime: '2026-10-18-09:55',
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
@@ -698,7 +698,7 @@ const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
     '--socket-timeout', '20',
-    '--js-runtimes', `node:${process.execPath}`,
+    '--js-runtimes', 'node',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -1186,14 +1186,11 @@ function dispatchNextQueuedJob() {
 
 const DOWNLOAD_RETRY_ARGS = [
   '--continue',
-  '--retries', '10',
-  '--fragment-retries', '10',
-  '--extractor-retries', '5',
-  '--retry-sleep', 'http:exp=1:20',
-  '--retry-sleep', 'fragment:exp=1:20',
-  '--retry-sleep', 'extractor:exp=1:10',
+  '--retries', '5',
+  '--fragment-retries', '5',
+  '--extractor-retries', '3',
 ];
-const MAX_DOWNLOAD_ATTEMPTS = 4;
+const MAX_DOWNLOAD_ATTEMPTS = 5;
 const AUDIO = {
   'mp3-320': ['-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
   'mp3-192': ['-x', '--audio-format', 'mp3', '--audio-quality', '192K'],
@@ -1259,7 +1256,7 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
     const message = err.trim().split('\n').filter(Boolean).pop() || 'Download failed';
     job.lastError = message;
     if (!spawnError && attempt < MAX_DOWNLOAD_ATTEMPTS) {
-      const delay = 400;
+      const delay = 300;
       job.stage = `Switching to alternative engine (${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS})…`;
       job.retryIn = delay;
       setTimeout(() => {
@@ -1282,12 +1279,19 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ffmpegDir = getFfmpegDir();
 
   // Multi-Engine Sequence:
-  // 1. tv_samsung (Native up to 8K/4K/1080p, no bot-challenges on cloud IPs)
-  // 2. android (Mobile API stream, guaranteed 100% bypass on any IP)
-  // 3. mweb (Mobile web stream)
-  // 4. web (Full browser client)
-  const clientFallbacks = ['tv_samsung', 'android', 'mweb', 'web'];
-  const clientChoice = clientFallbacks[attempt - 1] || 'tv_samsung';
+  // 1. visionos,tv_samsung,android,web (Tries visionos and tv_samsung first: full 8K, no cloud IP block)
+  // 2. tv_samsung (Samsung Smart TV backend - unblocked on cloud, full 8K/4K/1080p)
+  // 3. android (Mobile API stream - 100% bypass on any IP)
+  // 4. visionos (Apple Vision Pro backend - bypasses web challenges)
+  // 5. mweb,web (Mobile web and desktop web fallback)
+  const clientFallbacks = [
+    'visionos,tv_samsung,android,web',
+    'tv_samsung',
+    'android',
+    'visionos',
+    'mweb,web'
+  ];
+  const clientChoice = clientFallbacks[attempt - 1] || 'visionos,tv_samsung,android,web';
   const formatArgs = (attempt > 1 && job.kind === 'video')
     ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b/best`, '--merge-output-format', 'mp4']
     : job.args;
@@ -1329,7 +1333,8 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
 }
 
 app.post('/api/jobs', (req, res) => {
-  const { id, kind, q, title } = req.body || {};
+  const { id, kind, title } = req.body || {};
+  const q = req.body?.q || req.body?.quality;
   if (!ID_RE.test(id || '')) return res.status(400).json({ error: 'Invalid video ID.' });
   const args = getDownloadArgs(kind, q);
   if (!args) return res.status(400).json({ error: 'Invalid download format.' });
