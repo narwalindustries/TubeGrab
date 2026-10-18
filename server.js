@@ -889,19 +889,13 @@ app.get('/api/info', async (req, res) => {
         return fast;
       }
 
-      // 2. Try Innertube
-      try {
-        const inner = await getInnertubeInfo(id);
-        if (inner && inner.video && inner.video.length > 0) return inner;
-      } catch (_) {}
-
-      // 3. Fallback to runJson
+      // 2. Fast yt-dlp metadata extraction with JS challenge solving
       let raw = null;
       try {
-        raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
+        raw = await runJson(['--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
       } catch (_) {
         try {
-          raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '-J', 'https://www.youtube.com/watch?v=' + id]);
+          raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
         } catch (_) {}
       }
 
