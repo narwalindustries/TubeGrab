@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
     ca-certificates \
- && pip3 install --no-cache-dir --break-system-packages "yt-dlp[default]" \
+ && pip3 install --no-cache-dir --break-system-packages "https://github.com/yt-dlp/yt-dlp-nightly-builds/archive/refs/heads/master.tar.gz" \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
