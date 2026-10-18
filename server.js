@@ -488,28 +488,34 @@ async function getInnertubeInfo(id) {
     ...(info.streaming_data?.formats || []),
     ...(info.streaming_data?.adaptive_formats || []),
   ];
+  const dur = Number(info.basic_info?.duration || 0);
+  const audioFmts = fmts.filter(f => f.has_audio && !f.has_video);
+  const maxAudioSize = Math.max(0, ...audioFmts.map(f => Number(f.content_length || 0)));
+
   const byHeight = new Map();
   for (const f of fmts) {
     if (f.has_video && f.height && f.height >= 144) {
-      byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, Number(f.content_length || 0)));
+      const len = Number(f.content_length || 0) || (dur > 0 && f.bitrate ? Math.round(dur * (f.bitrate / 8)) : 0);
+      byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, len));
     }
   }
   const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
-    height: h, label: h + 'p' + (h >= 4320 ? ' (8K)' : h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
-    size: s ? Number(s) : null,
+    height: h,
+    label: h + 'p' + (h >= 8640 ? ' (16K)' : h >= 4320 ? ' (8K)' : h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
+    size: s ? Number(s) + maxAudioSize : null,
   }));
   const playbackQualities = [...byHeight.keys()].sort((a, b) => b - a);
   const audio = [
-    { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-    { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-    { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-    { q: 'm4a', label: 'M4A · Best (AAC)' },
-    { q: 'opus', label: 'OPUS · Best quality' },
+    { q: 'mp3-320', label: 'MP3 · 320 kbps', size: dur ? Math.round(dur * 40000) : null },
+    { q: 'mp3-192', label: 'MP3 · 192 kbps', size: dur ? Math.round(dur * 24000) : null },
+    { q: 'mp3-128', label: 'MP3 · 128 kbps', size: dur ? Math.round(dur * 16000) : null },
+    { q: 'm4a', label: 'M4A · Best (AAC)', size: maxAudioSize || (dur ? Math.round(dur * 16000) : null) },
+    { q: 'opus', label: 'OPUS · Best quality', size: maxAudioSize || (dur ? Math.round(dur * 16000) : null) },
   ];
   return {
     id,
     title: info.basic_info?.title || 'YouTube Video',
-    duration: info.basic_info?.duration || 0,
+    duration: dur,
     video,
     audio,
     playbackQualities,
@@ -601,18 +607,19 @@ async function getFastVideoInfo(id, userCookies = '') {
               };
             });
 
+            const dur = Number(details.lengthSeconds || 0);
             const audio = [
-              { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-              { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-              { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-              { q: 'm4a', label: 'M4A · Best (AAC)' },
-              { q: 'opus', label: 'OPUS · Best quality' },
+              { q: 'mp3-320', label: 'MP3 · 320 kbps', size: dur ? Math.round(dur * 40000) : null },
+              { q: 'mp3-192', label: 'MP3 · 192 kbps', size: dur ? Math.round(dur * 24000) : null },
+              { q: 'mp3-128', label: 'MP3 · 128 kbps', size: dur ? Math.round(dur * 16000) : null },
+              { q: 'm4a', label: 'M4A · Best (AAC)', size: maxAudioSize || (dur ? Math.round(dur * 16000) : null) },
+              { q: 'opus', label: 'OPUS · Best quality', size: maxAudioSize || (dur ? Math.round(dur * 16000) : null) },
             ];
 
             resolve({
               id,
               title: details.title || 'YouTube Video',
-              duration: Number(details.lengthSeconds || 0),
+              duration: dur,
               video,
               audio,
               playbackQualities: video.map(v => v.height),
@@ -749,12 +756,11 @@ app.use('/api', (req, res, next) => {
 });
 
 const baseArgs = (noPlaylist = true) => {
+  const nodeBin = process.execPath;
   const a = [
     '--no-warnings',
-    '-4',
     '--socket-timeout', '30',
-    '--js-runtimes', 'deno,node',
-    '--impersonate', 'chrome',
+    '--js-runtimes', `node:${nodeBin},deno`,
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -948,17 +954,27 @@ app.get('/api/info', async (req, res) => {
     const cookieHash = userCookies ? ':' + crypto.createHash('md5').update(userCookies).digest('hex').slice(0, 8) : '';
     const info = await cached('i:' + id + cookieHash, 10 * 60e3, async () => {
       // 1. Fast direct extraction from YouTube watch page
-      const fast = await getFastVideoInfo(id, userCookies);
-      if (fast && fast.video && fast.video.length > 0) {
-        return fast;
-      }
+      try {
+        const fast = await getFastVideoInfo(id, userCookies);
+        if (fast && fast.video && fast.video.length > 0) {
+          return fast;
+        }
+      } catch (_) {}
 
-      // 2. yt-dlp metadata extraction
+      // 2. High-speed, highly reliable in-memory Innertube extraction
+      try {
+        const inner = await getInnertubeInfo(id);
+        if (inner && inner.video && inner.video.length > 0) {
+          return inner;
+        }
+      } catch (_) {}
+
+      // 3. yt-dlp metadata extraction
       let userCookiePath = null;
       if (userCookies) {
         userCookiePath = createUserCookieFile(userCookies);
       }
-      const ytdlpArgs = ['--extractor-args', 'youtube:player_client=visionos', '--dump-json', '--skip-download'];
+      const ytdlpArgs = ['--extractor-args', 'youtube:player_client=android,web,tv_samsung', '--dump-json', '--skip-download'];
       if (userCookiePath) {
         ytdlpArgs.push('--cookies', userCookiePath);
       }
@@ -969,7 +985,7 @@ app.get('/api/info', async (req, res) => {
         raw = await runJson(ytdlpArgs);
       } catch (_) {
         try {
-          const fallbackArgs = ['--dump-json', '--skip-download'];
+          const fallbackArgs = ['--extractor-args', 'youtube:player_client=tv_samsung,web_embedded', '--dump-json', '--skip-download'];
           if (userCookiePath) fallbackArgs.push('--cookies', userCookiePath);
           fallbackArgs.push('https://www.youtube.com/watch?v=' + id);
           raw = await runJson(fallbackArgs);
@@ -980,12 +996,13 @@ app.get('/api/info', async (req, res) => {
         }
       }
 
+      const dur = raw?.duration || 0;
       const audio = [
-        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-        { q: 'm4a', label: 'M4A · Best (AAC)' },
-        { q: 'opus', label: 'OPUS · Best quality' },
+        { q: 'mp3-320', label: 'MP3 · 320 kbps', size: dur ? Math.round(dur * 40000) : null },
+        { q: 'mp3-192', label: 'MP3 · 192 kbps', size: dur ? Math.round(dur * 24000) : null },
+        { q: 'mp3-128', label: 'MP3 · 128 kbps', size: dur ? Math.round(dur * 16000) : null },
+        { q: 'm4a', label: 'M4A · Best (AAC)', size: dur ? Math.round(dur * 16000) : null },
+        { q: 'opus', label: 'OPUS · Best quality', size: dur ? Math.round(dur * 16000) : null },
       ];
 
       if (raw) {
@@ -1014,33 +1031,19 @@ app.get('/api/info', async (req, res) => {
           };
         });
 
-        return {
-          id,
-          title: raw.title || 'YouTube Video',
-          duration: raw.duration || 0,
-          video: video.length ? video : [
-            { height: 1080, label: '1080p (HD)', size: null },
-            { height: 720, label: '720p', size: null },
-            { height: 360, label: '360p', size: null },
-          ],
-          audio,
-          playbackQualities: video.map(v => v.height),
-        };
+        if (video.length > 0) {
+          return {
+            id,
+            title: raw.title || 'YouTube Video',
+            duration: dur,
+            video,
+            audio,
+            playbackQualities: video.map(v => v.height),
+          };
+        }
       }
 
-      // Safe fallback if extraction failed completely
-      return {
-        id,
-        title: 'YouTube Video',
-        duration: 0,
-        video: [
-          { height: 1080, label: '1080p (HD)', size: null },
-          { height: 720, label: '720p', size: null },
-          { height: 360, label: '360p', size: null },
-        ],
-        audio,
-        playbackQualities: [1080, 720, 360],
-      };
+      throw new Error('Unable to extract video format qualities');
     });
     res.json(info);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1285,25 +1288,30 @@ function isTransientDownloadError(message) {
 
 async function downloadViaInnertube(jobId, job) {
   try {
-    job.stage = 'Trying emergency fallback engine…';
+    job.stage = 'Trying alternative stream pipeline…';
     const isAudio = job.kind === 'audio';
     const maxHeight = parseInt(job.quality, 10) || 720;
-    const urls = await extractWithInnertube(job.videoId, maxHeight, false);
-    if (!urls || !urls.length) throw new Error('No streams available from alternative engine');
-
-    const vUrl = urls[0];
-    const aUrl = urls[1] || null;
     const ffmpegBin = resolveBinary('ffmpeg') || FFMPEG || 'ffmpeg';
     const targetFile = isAudio ? 'audio.mp3' : 'video.mp4';
     const targetPath = path.join(job.dir, targetFile);
 
+    const streamFormat = isAudio ? 'ba/b/best' : `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/18/b/best`;
+    let streamUrls = [];
+    try {
+      streamUrls = await runLines(['--extractor-args', 'youtube:player_client=android,web', '-f', streamFormat, '-g', `https://www.youtube.com/watch?v=${job.videoId}`]);
+    } catch (_) {}
+
+    if (!streamUrls || !streamUrls.length) {
+      throw new Error(job.lastError || 'Could not retrieve direct media stream');
+    }
+
     const ffArgs = ['-y'];
-    ffArgs.push('-i', vUrl);
-    if (aUrl) ffArgs.push('-i', aUrl);
     if (isAudio) {
-      ffArgs.push('-c:a', 'libmp3lame', '-b:a', '192k', targetPath);
+      ffArgs.push('-i', streamUrls[0], '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', targetPath);
+    } else if (streamUrls.length >= 2) {
+      ffArgs.push('-i', streamUrls[0], '-i', streamUrls[1], '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', targetPath);
     } else {
-      ffArgs.push('-c', 'copy', targetPath);
+      ffArgs.push('-i', streamUrls[0], '-c', 'copy', targetPath);
     }
 
     const ff = spawn(ffmpegBin, ffArgs, { windowsHide: true });
@@ -1331,10 +1339,10 @@ async function downloadViaInnertube(jobId, job) {
       job.completed = Date.now();
       dispatchNextQueuedJob();
     });
-  } catch (innertubeErr) {
+  } catch (err) {
     job.status = 'error';
     job.stage = 'Failed';
-    job.error = job.lastError || innertubeErr.message || 'Download failed';
+    job.error = job.lastError || err.message || 'Download failed';
     job.completed = Date.now();
     dispatchNextQueuedJob();
   }
@@ -1399,11 +1407,11 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   // 4. ios,mweb (Apple mobile & mobile web APIs)
   // 5. web_safari,web (Safari browser client)
   const clientFallbacks = [
-    'tv_samsung,visionos,web',
-    'tv_samsung,web_embedded',
-    'android',
+    'android,web',
+    'tv_samsung,web',
     'ios,mweb',
-    'web_safari,web'
+    'tv_samsung,web_embedded',
+    'web'
   ];
   const clientChoice = clientFallbacks[attempt - 1] || 'tv_samsung,visionos,web';
   const formatArgs = (attempt > 1 && job.kind === 'video')

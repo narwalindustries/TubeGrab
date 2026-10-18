@@ -623,7 +623,7 @@ function openDownload(id, title) {
     body.innerHTML = `
       <div class="tabs"><button class="tab on" data-tab="video">🎬 Video (MP4)</button><button class="tab" data-tab="audio">🎵 Audio</button></div>
       <div class="opts" id="tab-video" style="display:grid">${hasVideo ? vidFormats.map(v => optBtn('video', v.height, cleanLabel(v), v.size, formatBadge(v.height))).join('') : '<div style="padding:24px;text-align:center;color:#aaa">No direct video streams found.</div>'}</div>
-      <div class="opts" id="tab-audio" hidden style="display:none">${audFormats.map(a => optBtn('audio', a.q, a.label)).join('')}</div>
+      <div class="opts" id="tab-audio" hidden style="display:none">${audFormats.map(a => optBtn('audio', a.q, a.label, a.size)).join('')}</div>
       <div id="prog"></div>`;
     body.querySelectorAll('.tab').forEach(t => t.onclick = () => {
       body.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x === t));
@@ -641,12 +641,14 @@ function openDownload(id, title) {
     body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, curTitle, b.dataset.kind, b.dataset.q));
   };
 
-  // If already fetched/cached, render real formats instantly
+  // If already fetched/cached with real formats, render instantly
   if (videoInfoCache.has(id)) {
     const info = videoInfoCache.get(id);
-    const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
-    renderFormats(info.video || [], info.audio || defaultAudio, t);
-    return;
+    if (info && info.video && info.video.length > 0) {
+      const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
+      renderFormats(info.video, info.audio || defaultAudio, t);
+      return;
+    }
   }
 
   // Otherwise, show clean quality detection spinner
@@ -667,13 +669,20 @@ function openDownload(id, title) {
       const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
       renderFormats(vidFormats, audFormats, t);
     })
-    .catch(() => {
+    .catch(err => {
       if ($('#dlModal').hidden) return;
-      renderFormats([
-        { height: 1080, label: '1080p', size: null },
-        { height: 720, label: '720p', size: null },
-        { height: 360, label: '360p', size: null },
-      ], defaultAudio, resolvedTitle);
+      const dBody = $('#dBody');
+      dBody.innerHTML = `
+        <div style="padding:28px 16px;text-align:center;">
+          <p style="color:#f87171;font-size:14px;margin-bottom:14px;line-height:1.4;">Could not detect video qualities: ${esc(err.message || 'Please try again')}</p>
+          <button class="opt" style="margin:0 auto;display:inline-flex;padding:10px 22px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.16);border-radius:10px;cursor:pointer;color:#fff;" id="retryDlInfoBtn">
+            <span>🔄 Retry Quality Detection</span>
+          </button>
+        </div>`;
+      $('#retryDlInfoBtn')?.addEventListener('click', () => {
+        videoInfoCache.delete(id);
+        openDownload(id, resolvedTitle);
+      });
     });
 }
 
