@@ -681,7 +681,7 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-18-10:56',
+    deployTime: '2026-10-18-11:05',
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
@@ -1224,11 +1224,11 @@ const DOWNLOAD_RETRY_ARGS = [
 ];
 const MAX_DOWNLOAD_ATTEMPTS = 5;
 const AUDIO = {
-  'mp3-320': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
-  'mp3-192': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '192K'],
-  'mp3-128': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '128K'],
-  'm4a':     ['-f', 'ba[ext=m4a]/ba/b', '-x', '--audio-format', 'm4a'],
-  'opus':    ['-f', 'ba/b', '-x', '--audio-format', 'opus'],
+  'mp3-320': ['-f', 'ba/b/18/best', '-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
+  'mp3-192': ['-f', 'ba/b/18/best', '-x', '--audio-format', 'mp3', '--audio-quality', '192K'],
+  'mp3-128': ['-f', 'ba/b/18/best', '-x', '--audio-format', 'mp3', '--audio-quality', '128K'],
+  'm4a':     ['-f', 'ba[ext=m4a]/ba/b/18/best', '-x', '--audio-format', 'm4a'],
+  'opus':    ['-f', 'ba/b/18/best', '-x', '--audio-format', 'opus'],
 };
 const rmDir = d => fs.rm(d, { recursive: true, force: true }, () => {});
 
@@ -1238,7 +1238,7 @@ function getDownloadArgs(kind, q) {
     const h = parseInt(q, 10);
     if (!(h >= 100 && h <= 8640)) return null;
     args = [
-      '-f', `bv*[height<=${h}]+ba/b/best`,
+      '-f', `bv*[height<=${h}]+ba/b[height<=${h}]/bv*+ba/18/b/best`,
       '-S', `res:${h}`,
       '--merge-output-format', 'mp4',
     ];
@@ -1312,20 +1312,20 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
 
   // Multi-Engine Sequence:
   // 1. visionos (Apple Vision Pro backend - full 8K/4K/1080p, completely bypasses SABR)
-  // 2. visionos,android (Combined VisionOS + Android)
-  // 3. android (Mobile stream - format 18 / best)
+  // 2. android (Mobile stream - format 18 / best universal fallback)
+  // 3. visionos,android (Combined VisionOS + Android)
   // 4. mweb (Mobile web)
   // 5. web (Desktop web)
   const clientFallbacks = [
     'visionos',
-    'visionos,android',
     'android',
+    'visionos,android',
     'mweb',
     'web'
   ];
   const clientChoice = clientFallbacks[attempt - 1] || 'visionos';
   const formatArgs = (attempt > 1 && job.kind === 'video')
-    ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b/best`, '--merge-output-format', 'mp4']
+    ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b[height<=${parseInt(job.quality, 10) || 1080}]/18/b/best`, '--merge-output-format', 'mp4']
     : job.args;
 
   const pArgs = [
