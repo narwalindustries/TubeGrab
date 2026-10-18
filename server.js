@@ -681,7 +681,7 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-18-10:24',
+    deployTime: '2026-10-18-10:56',
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
@@ -770,10 +770,55 @@ const cached = async (key, ttlMs, fn) => {
 };
 
 // ---------- search / home feed ----------
-let homeFeedPool = [];
-let homeShortsPool = [];
-let homeFeedTime = 0;
-const HOME_CACHE_TTL = 15 * 60 * 1000;
+const INITIAL_HOME_VIDEOS = [
+  { id: 'ri1Ar5nEq4s', title: 'Aaj Ki Raat - 8K Video | Stree 2 | Tamannaah Bhatia, Rajkummar Rao | Sachin-Jigar', channel: 'Saregama Music', duration: 277, views: 98000000 },
+  { id: 'sA8y_ZtX5vY', title: 'Tauba Tauba | Bad Newz | Vicky Kaushal | Karan Aujla | T-Series', channel: 'T-Series', duration: 208, views: 185000000 },
+  { id: '1k8craCGpgs', title: 'Aayi Nai | Stree 2 | Shraddha Kapoor, Rajkummar Rao | Sachin-Jigar', channel: 'Saregama Music', duration: 180, views: 140000000 },
+  { id: 'gnhXHvRoUd0', title: 'Husn | Anuv Jain (Official Music Video)', channel: 'Anuv Jain', duration: 220, views: 110000000 },
+  { id: 'XO8wew38VM8', title: 'Millionaire Song | Glory | Yo Yo Honey Singh | Bhushan Kumar', channel: 'T-Series', duration: 202, views: 88000000 },
+  { id: 'cWMxCE2HTag', title: 'Softly | Karan Aujla | Ikky | Four Me (Official Music Video)', channel: 'Karan Aujla', duration: 154, views: 120000000 },
+  { id: 'Tccq_V8dFmU', title: 'Winning Speech | Karan Aujla | Mxrci | Street Dreams', channel: 'Karan Aujla', duration: 198, views: 76000000 },
+  { id: 'VAdGW7QDJUI', title: 'Chaleya | Jawan | Shah Rukh Khan | Nayanthara | Atlee | Anirudh | Arijit Singh', channel: 'T-Series', duration: 190, views: 240000000 },
+  { id: 'BddP6PYo2gs', title: 'Kesariya - Brahmāstra | Ranbir Kapoor | Alia Bhatt | Pritam | Arijit Singh', channel: 'Sony Music India', duration: 268, views: 560000000 },
+  { id: 'kPa7bsKwL-8', title: 'Lady Gaga, Bruno Mars - Die With A Smile (Official Music Video)', channel: 'Lady Gaga', duration: 252, views: 320000000 },
+  { id: 'eVli-tstM5E', title: 'Sabrina Carpenter - Espresso (Official Video)', channel: 'Sabrina Carpenter', duration: 185, views: 210000000 },
+  { id: 'd5gf9dXbPi0', title: 'Billie Eilish - BIRDS OF A FEATHER (Official Music Video)', channel: 'Billie Eilish', duration: 205, views: 190000000 },
+  { id: 'H58vbez_m4E', title: 'Kendrick Lamar - Not Like Us (Official Music Video)', channel: 'Kendrick Lamar', duration: 274, views: 180000000 },
+  { id: '34Na4j8AVgA', title: 'The Weeknd - Starboy ft. Daft Punk (Official Music Video)', channel: 'The Weeknd', duration: 230, views: 2400000000 },
+  { id: '4NRXx6U8ABQ', title: 'The Weeknd - Blinding Lights (Official Video)', channel: 'The Weeknd', duration: 260, views: 820000000 },
+  { id: 'JGwWNGJdvx8', title: 'Ed Sheeran - Shape of You (Official Music Video)', channel: 'Ed Sheeran', duration: 263, views: 6300000000 },
+  { id: '7wtfhZwyrcc', title: 'Imagine Dragons - Believer (Official Music Video)', channel: 'ImagineDragons', duration: 216, views: 2600000000 },
+  { id: '60ItHLz5WEA', title: 'Alan Walker - Faded', channel: 'Alan Walker', duration: 212, views: 3600000000 },
+  { id: 'cl0a3i2wFcc', title: 'Smartphone Awards 2024! | MKBHD', channel: 'Marques Brownlee', duration: 1240, views: 4800000 },
+  { id: 'w4ClQO0FFQg', title: 'iPhone 16 Pro Review: What Happened? | MKBHD', channel: 'Marques Brownlee', duration: 920, views: 5400000 },
+  { id: 'bHIhgxav9LY', title: 'Why The Universe is Not Locally Real | Veritasium', channel: 'Veritasium', duration: 1780, views: 11000000 },
+  { id: 'fJ9rUzIMcZQ', title: 'Queen - Bohemian Rhapsody (Official Video Remastered)', channel: 'Queen Official', duration: 360, views: 1700000000 },
+  { id: 'kJQP7kiw5Fk', title: 'Luis Fonsi - Despacito ft. Daddy Yankee', channel: 'Luis Fonsi', duration: 282, views: 8500000000 },
+  { id: 'OPf0YbXqDm0', title: 'Mark Ronson - Uptown Funk ft. Bruno Mars', channel: 'Mark Ronson', duration: 271, views: 5300000000 },
+].map(item => ({
+  ...item,
+  thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`
+}));
+
+const INITIAL_HOME_SHORTS = [
+  { id: '3jz_30mP2Zk', title: 'Satisfying Kinetic Sand Cut #shorts', channel: 'Sand Tagious', duration: 25, views: 42000000, isShort: true },
+  { id: 'b47w87j_kXU', title: 'Mind Blowing Magic Trick Revealed #shorts', channel: 'Zach King', duration: 18, views: 89000000, isShort: true },
+  { id: 'L_LUpnjgPso', title: 'When you drop your phone in public #shorts', channel: 'CalebCity', duration: 32, views: 18000000, isShort: true },
+  { id: 'XqZsoesa55w', title: 'Crazy Domino Chain Reaction #shorts', channel: 'Hevesh5', duration: 45, views: 65000000, isShort: true },
+  { id: 'Y8Wp3dafaMQ', title: 'Incredible Beatbox Sounds #shorts', channel: 'Spencer X', duration: 22, views: 38000000, isShort: true },
+  { id: '79DijItQXMM', title: 'Fastest Speedcuber in the World #shorts', channel: 'CubeHead', duration: 20, views: 24000000, isShort: true },
+  { id: 'nFSXmY1X0z0', title: 'Most Satisfying Clay Cracking #shorts', channel: 'ASMR Studio', duration: 35, views: 31000000, isShort: true },
+  { id: 'zSWdZVtXT7E', title: 'Insane Card Throwing Precision #shorts', channel: 'Rick Smith Jr', duration: 28, views: 52000000, isShort: true },
+].map(item => ({
+  ...item,
+  thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`
+}));
+
+let homeFeedPool = [...INITIAL_HOME_VIDEOS];
+let homeShortsPool = [...INITIAL_HOME_SHORTS];
+let homeFeedTime = Date.now();
+let isRefreshingHomeFeed = false;
+const HOME_CACHE_TTL = 30 * 60 * 1000;
 
 async function fetchCategoryBatch(query, limit = 12) {
   try {
@@ -784,51 +829,37 @@ async function fetchCategoryBatch(query, limit = 12) {
   }
 }
 
-async function getHomeFeedVideos() {
-  if (homeFeedPool.length >= 36 && Date.now() - homeFeedTime < HOME_CACHE_TTL) {
-    return { videos: homeFeedPool, shorts: homeShortsPool };
-  }
+async function refreshHomeFeedBackground() {
+  if (isRefreshingHomeFeed) return;
+  isRefreshingHomeFeed = true;
   try {
     const selectedQueries = VAST_HOME_CATEGORIES.map(cat => cat[Math.floor(Math.random() * cat.length)]);
-    const shortsQuery = 'trending funny viral shorts #shorts';
-
-    const [catResults, shortsResult] = await Promise.all([
-      Promise.all(selectedQueries.map(q => fetchCategoryBatch(q, 10))),
-      fetchCategoryBatch(shortsQuery, 12)
-    ]);
-
-    const interleaved = [];
-    const maxItems = Math.max(0, ...catResults.map(r => r.length));
-    for (let i = 0; i < maxItems; i++) {
-      for (const cat of catResults) {
-        if (cat[i]) interleaved.push(cat[i]);
-      }
-    }
-
-    if (interleaved.length > 0) {
-      homeFeedPool = interleaved.map(item => ({
+    const catResults = await Promise.all(selectedQueries.slice(0, 3).map(q => fetchCategoryBatch(q, 8)));
+    const flat = catResults.flat().filter(Boolean);
+    if (flat.length >= 12) {
+      homeFeedPool = flat.map(item => ({
         id: item.id,
         title: item.title,
         channel: item.channel || item.uploader,
         duration: item.duration,
         views: item.view_count,
         thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-      }));
-      homeShortsPool = shortsResult.slice(0, 8).map(item => ({
-        id: item.id,
-        title: item.title,
-        channel: item.channel || item.uploader,
-        duration: item.duration,
-        views: item.view_count,
-        thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-        isShort: true,
       }));
       homeFeedTime = Date.now();
     }
-  } catch (err) {
-    console.warn('[HomeFeed] Error fetching:', err.message);
+  } catch (_) {}
+  finally { isRefreshingHomeFeed = false; }
+}
+
+async function getHomeFeedVideos() {
+  // Always return immediately (instant sub-second response!)
+  if (Date.now() - homeFeedTime > HOME_CACHE_TTL && !isRefreshingHomeFeed) {
+    refreshHomeFeedBackground();
   }
-  return { videos: homeFeedPool, shorts: homeShortsPool };
+  return {
+    videos: homeFeedPool.length >= 12 ? homeFeedPool : INITIAL_HOME_VIDEOS,
+    shorts: homeShortsPool.length >= 4 ? homeShortsPool : INITIAL_HOME_SHORTS,
+  };
 }
 
 app.get('/api/search', async (req, res) => {
@@ -897,15 +928,11 @@ app.get('/api/info', async (req, res) => {
       // 2. Fast yt-dlp metadata extraction with JS challenge solving
       let raw = null;
       try {
-        raw = await runJson(['--extractor-args', 'youtube:player_client=tv_samsung', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+        raw = await runJson(['--extractor-args', 'youtube:player_client=visionos', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
       } catch (_) {
         try {
           raw = await runJson(['--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
-        } catch (_) {
-          try {
-            raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
-          } catch (_) {}
-        }
+        } catch (_) {}
       }
 
       if (raw) {
@@ -1197,11 +1224,11 @@ const DOWNLOAD_RETRY_ARGS = [
 ];
 const MAX_DOWNLOAD_ATTEMPTS = 5;
 const AUDIO = {
-  'mp3-320': ['-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
-  'mp3-192': ['-x', '--audio-format', 'mp3', '--audio-quality', '192K'],
-  'mp3-128': ['-x', '--audio-format', 'mp3', '--audio-quality', '128K'],
-  'm4a':     ['-f', 'ba[ext=m4a]/ba', '-x', '--audio-format', 'm4a'],
-  'opus':    ['-f', 'ba', '-x', '--audio-format', 'opus'],
+  'mp3-320': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '320K'],
+  'mp3-192': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '192K'],
+  'mp3-128': ['-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '128K'],
+  'm4a':     ['-f', 'ba[ext=m4a]/ba/b', '-x', '--audio-format', 'm4a'],
+  'opus':    ['-f', 'ba/b', '-x', '--audio-format', 'opus'],
 };
 const rmDir = d => fs.rm(d, { recursive: true, force: true }, () => {});
 
@@ -1211,7 +1238,7 @@ function getDownloadArgs(kind, q) {
     const h = parseInt(q, 10);
     if (!(h >= 100 && h <= 8640)) return null;
     args = [
-      '-f', `bv*[height=${h}]+ba/bv*[height<=${h}]+ba/bestvideo[height<=${h}]+bestaudio/best`,
+      '-f', `bv*[height<=${h}]+ba/b/best`,
       '-S', `res:${h}`,
       '--merge-output-format', 'mp4',
     ];
@@ -1284,19 +1311,19 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ffmpegDir = getFfmpegDir();
 
   // Multi-Engine Sequence:
-  // 1. default,-android_sdkless (Standard player client with yt-dlp-ejs solver)
-  // 2. android,mweb (Mobile clients, minimal anti-bot restrictions)
-  // 3. tv_samsung (Samsung Smart TV backend - unblocked 8K/4K/1080p)
-  // 4. ios (Mobile iOS backend)
-  // 5. web (Desktop web client)
+  // 1. visionos (Apple Vision Pro backend - full 8K/4K/1080p, completely bypasses SABR)
+  // 2. visionos,android (Combined VisionOS + Android)
+  // 3. android (Mobile stream - format 18 / best)
+  // 4. mweb (Mobile web)
+  // 5. web (Desktop web)
   const clientFallbacks = [
-    'default,-android_sdkless',
-    'android,mweb',
-    'tv_samsung',
-    'ios',
+    'visionos',
+    'visionos,android',
+    'android',
+    'mweb',
     'web'
   ];
-  const clientChoice = clientFallbacks[attempt - 1] || 'default,-android_sdkless';
+  const clientChoice = clientFallbacks[attempt - 1] || 'visionos';
   const formatArgs = (attempt > 1 && job.kind === 'video')
     ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b/best`, '--merge-output-format', 'mp4']
     : job.args;

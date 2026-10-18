@@ -644,26 +644,23 @@ function openDownload(id, title) {
     body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, curTitle, b.dataset.kind, b.dataset.q));
   };
 
-  // Show extraction loading spinner while analyzing real formats
-  const body = $('#dBody');
-  body.innerHTML = `
-    <div class="extracting-state">
-      <div class="circle-spinner" style="width:36px;height:36px;border-width:3px;margin:12px auto 6px;"></div>
-      <p>Extracting stream formats…</p>
-      <span>Analyzing video resolutions up to 8K / 4K UHD</span>
-    </div>`;
+  // 1. Render all format qualities IMMEDIATELY (0ms latency - instant!)
+  renderFormats(defaultVideo, defaultAudio, resolvedTitle);
 
-  // Fetch real formats
-  api('/api/info?id=' + encodeURIComponent(id)).then(info => {
-    if ($('#dlModal').hidden) return;
-    const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
-    const vidFormats = (info.video && info.video.length) ? info.video : defaultVideo;
-    const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
-    renderFormats(vidFormats, audFormats, t);
-  }).catch(() => {
-    if ($('#dlModal').hidden) return;
-    renderFormats(defaultVideo, defaultAudio, resolvedTitle);
-  });
+  // 2. Silently enrich real file sizes in background without blocking user
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 2000);
+  fetch(resolveUrl('/api/info?id=' + encodeURIComponent(id)), { signal: ctrl.signal })
+    .then(r => r.json())
+    .then(info => {
+      clearTimeout(tid);
+      if ($('#dlModal').hidden) return;
+      const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
+      const vidFormats = (info.video && info.video.length) ? info.video : defaultVideo;
+      const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
+      renderFormats(vidFormats, audFormats, t);
+    })
+    .catch(() => {});
 }
 
 async function startJob(id, title, kind, q) {
