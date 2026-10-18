@@ -681,7 +681,7 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-18-10:12',
+    deployTime: '2026-10-18-10:24',
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
@@ -1284,19 +1284,19 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ffmpegDir = getFfmpegDir();
 
   // Multi-Engine Sequence:
-  // 1. visionos,tv_samsung,android,web (Tries visionos and tv_samsung first: full 8K, no cloud IP block)
-  // 2. tv_samsung (Samsung Smart TV backend - unblocked on cloud, full 8K/4K/1080p)
-  // 3. android (Mobile API stream - 100% bypass on any IP)
-  // 4. visionos (Apple Vision Pro backend - bypasses web challenges)
-  // 5. mweb,web (Mobile web and desktop web fallback)
+  // 1. default,-android_sdkless (Standard player client with yt-dlp-ejs solver)
+  // 2. android,mweb (Mobile clients, minimal anti-bot restrictions)
+  // 3. tv_samsung (Samsung Smart TV backend - unblocked 8K/4K/1080p)
+  // 4. ios (Mobile iOS backend)
+  // 5. web (Desktop web client)
   const clientFallbacks = [
-    'visionos,tv_samsung,android,web',
+    'default,-android_sdkless',
+    'android,mweb',
     'tv_samsung',
-    'android',
-    'visionos',
-    'mweb,web'
+    'ios',
+    'web'
   ];
-  const clientChoice = clientFallbacks[attempt - 1] || 'visionos,tv_samsung,android,web';
+  const clientChoice = clientFallbacks[attempt - 1] || 'default,-android_sdkless';
   const formatArgs = (attempt > 1 && job.kind === 'video')
     ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b/best`, '--merge-output-format', 'mp4']
     : job.args;
