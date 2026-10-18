@@ -324,6 +324,11 @@ Platform.shim.eval = async (d) => new Function(d.output)();
 function getCookiesPath() {
   if (process.env.YT_COOKIES && fs.existsSync(process.env.YT_COOKIES)) return process.env.YT_COOKIES;
   const local = path.join(__dirname, 'cookies.txt');
+  if (process.env.YT_COOKIES_CONTENT && !fs.existsSync(local)) {
+    try { fs.writeFileSync(local, process.env.YT_COOKIES_CONTENT, 'utf8'); } catch (_) {}
+  } else if (process.env.YT_COOKIES_BASE64 && !fs.existsSync(local)) {
+    try { fs.writeFileSync(local, Buffer.from(process.env.YT_COOKIES_BASE64, 'base64').toString('utf8'), 'utf8'); } catch (_) {}
+  }
   if (fs.existsSync(local) && fs.statSync(local).size > 100) return local;
   return '';
 }
@@ -676,7 +681,7 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-18-09:55',
+    deployTime: '2026-10-18-10:07',
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
