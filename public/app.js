@@ -469,7 +469,13 @@ function renderDownloads(jobs) {
         ? esc(job.stage || 'In queue · Waiting for slot')
         : done
           ? 'Ready to save'
-          : esc(job.error || 'Download failed');
+          : esc((() => {
+              const e = job.error || '';
+              if (/failed to extract any player response/i.test(e)) {
+                return 'YouTube blocked cloud server IP. Use TubeGrab Desktop/Local App or configure YT_COOKIES_CONTENT in Render.';
+              }
+              return e.replace(/^ERROR:\s*\[[^\]]+\]\s*/i, '').slice(0, 140) || 'Download failed';
+            })());
     const action = done
       ? `<a class="download-file" href="${resolveUrl(`/api/jobs/${encodeURIComponent(job.id)}/file`)}" download="${esc(job.filename || '')}">Download file</a>`
       : running || queued
