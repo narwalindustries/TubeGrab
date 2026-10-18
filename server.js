@@ -492,80 +492,87 @@ async function getInnertubeInfo(id) {
 
 async function getFastVideoInfo(id) {
   return new Promise((resolve) => {
-    const req = https.get(`https://www.youtube.com/watch?v=${encodeURIComponent(id)}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      timeout: 8000,
-    }, res => {
-      let data = '';
-      res.on('data', chunk => { data += chunk; });
-      res.on('end', () => {
-        try {
-          const m = data.match(/var ytInitialPlayerResponse\s*=\s*({.+?});<\/script>/) ||
-                    data.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-          if (!m) return resolve(null);
-          const json = JSON.parse(m[1]);
-          const details = json.videoDetails || {};
-          const streaming = json.streamingData || {};
-          const fmts = [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
-          if (!fmts.length) return resolve(null);
-
-          const audioFmts = fmts.filter(f => f.mimeType && f.mimeType.startsWith('audio/'));
-          const maxAudioSize = Math.max(0, ...audioFmts.map(f => Number(f.contentLength || 0)));
-
-          const byHeight = new Map();
-          for (const f of fmts) {
-            if (!f.height || f.height < 144) continue;
-            const size = Number(f.contentLength || 0);
-            const current = byHeight.get(f.height) || { size: 0, fps: 30 };
-            if (size > current.size) {
-              byHeight.set(f.height, {
-                size,
-                fps: f.fps || 30,
-              });
-            }
-          }
-
-          const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, meta]) => {
-            let tag = '';
-            if (h >= 8640) tag = ' (16K)';
-            else if (h >= 4320) tag = ' (8K)';
-            else if (h >= 2160) tag = ' (4K)';
-            else if (h >= 1440) tag = ' (2K)';
-            else if (h >= 1080) tag = ' (HD)';
-            return {
-              height: h,
-              label: `${h}p${tag}`,
-              size: meta.size ? meta.size + maxAudioSize : null,
-              fps: meta.fps,
-            };
-          });
-
-          const audio = [
-            { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-            { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-            { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-            { q: 'm4a', label: 'M4A · Best (AAC)' },
-            { q: 'opus', label: 'OPUS · Best quality' },
-          ];
-
-          resolve({
-            id,
-            title: details.title || 'YouTube Video',
-            duration: Number(details.lengthSeconds || 0),
-            video,
-            audio,
-            playbackQualities: video.map(v => v.height),
-          });
-        } catch (e) {
-          resolve(null);
+    const fetchPage = (targetUrl, depth = 0) => {
+      if (depth > 2) return resolve(null);
+      const req = https.get(targetUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        timeout: 4000,
+      }, res => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return fetchPage(res.headers.location, depth + 1);
         }
+        let data = '';
+        res.on('data', chunk => { data += chunk; });
+        res.on('end', () => {
+          try {
+            const m = data.match(/var ytInitialPlayerResponse\s*=\s*({.+?});<\/script>/) ||
+                      data.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+            if (!m) return resolve(null);
+            const json = JSON.parse(m[1]);
+            const details = json.videoDetails || {};
+            const streaming = json.streamingData || {};
+            const fmts = [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
+            if (!fmts.length) return resolve(null);
+
+            const audioFmts = fmts.filter(f => f.mimeType && f.mimeType.startsWith('audio/'));
+            const maxAudioSize = Math.max(0, ...audioFmts.map(f => Number(f.contentLength || 0)));
+
+            const byHeight = new Map();
+            for (const f of fmts) {
+              if (!f.height || f.height < 144) continue;
+              const size = Number(f.contentLength || 0);
+              const current = byHeight.get(f.height) || { size: 0, fps: 30 };
+              if (size > current.size) {
+                byHeight.set(f.height, {
+                  size,
+                  fps: f.fps || 30,
+                });
+              }
+            }
+
+            const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, meta]) => {
+              let tag = '';
+              if (h >= 8640) tag = ' (16K)';
+              else if (h >= 4320) tag = ' (8K)';
+              else if (h >= 2160) tag = ' (4K)';
+              else if (h >= 1440) tag = ' (2K)';
+              else if (h >= 1080) tag = ' (HD)';
+              return {
+                height: h,
+                label: `${h}p${tag}`,
+                size: meta.size ? meta.size + maxAudioSize : null,
+                fps: meta.fps,
+              };
+            });
+
+            const audio = [
+              { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+              { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+              { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+              { q: 'm4a', label: 'M4A · Best (AAC)' },
+              { q: 'opus', label: 'OPUS · Best quality' },
+            ];
+
+            resolve({
+              id,
+              title: details.title || 'YouTube Video',
+              duration: Number(details.lengthSeconds || 0),
+              video,
+              audio,
+              playbackQualities: video.map(v => v.height),
+            });
+          } catch (_) {
+            resolve(null);
+          }
+        });
       });
-    });
-    req.on('error', () => resolve(null));
-    req.on('timeout', () => { req.destroy(); resolve(null); });
+      req.on('error', () => resolve(null));
+      req.on('timeout', () => { req.destroy(); resolve(null); });
+    };
+    fetchPage(`https://www.youtube.com/watch?v=${encodeURIComponent(id)}`);
   });
 }
 
@@ -691,6 +698,7 @@ const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
     '--socket-timeout', '20',
+    '--js-runtimes', 'node',
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -891,7 +899,11 @@ app.get('/api/info', async (req, res) => {
       let raw = null;
       try {
         raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
-      } catch (_) {}
+      } catch (_) {
+        try {
+          raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '-J', 'https://www.youtube.com/watch?v=' + id]);
+        } catch (_) {}
+      }
 
       if (raw) {
         const fmts = raw.formats || [];
@@ -1210,7 +1222,7 @@ function getDownloadArgs(kind, q) {
 }
 
 function isTransientDownloadError(message) {
-  return /(temporary|timed?\s*out|timeout|connection|network|resolve|dns|name or service not known|temporary failure|http error 5\d\d|http error 429|giving up after \d+ retries)/i.test(message);
+  return /(temporary|timed?\s*out|timeout|connection|network|resolve|dns|name or service not known|temporary failure|http error 5\d\d|http error 429|giving up after \d+ retries|failed to extract|unable to extract|player response|n challenge)/i.test(message);
 }
 
 async function startDownloadAttempt(jobId, job, attempt = 1) {
@@ -1229,8 +1241,8 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
       files = fs.readdirSync(job.dir)
         .filter(f => !/\.(part|ytdl|temp)$/.test(f))
         .map(f => ({ f, s: fs.statSync(path.join(job.dir, f)).size }))
-        .filter(file => file.s > 0)
-        .sort((a, b) => b.s - a.s);
+      .filter(file => file.s > 0)
+      .sort((a, b) => b.s - a.s);
     } catch (_) {}
 
     const mediaFiles = files.filter(file => mediaExts.test(file.f));
@@ -1271,8 +1283,15 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
   const ffmpegDir = getFfmpegDir();
 
+  const clientFallbacks = ['web', 'android,web', 'web,mweb', 'ios,web'];
+  const clientChoice = clientFallbacks[attempt - 1] || 'web';
   const pArgs = [
-    ...baseArgs(), ...DOWNLOAD_RETRY_ARGS, '--newline', '--concurrent-fragments', '4', '--windows-filenames',
+    ...baseArgs(),
+    ...(clientChoice !== 'web' ? ['--extractor-args', `youtube:player_client=${clientChoice}`] : []),
+    ...DOWNLOAD_RETRY_ARGS,
+    '--newline',
+    '--concurrent-fragments', '4',
+    '--windows-filenames',
   ];
   if (ffmpegDir) pArgs.push('--ffmpeg-location', ffmpegDir);
   pArgs.push(

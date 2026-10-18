@@ -577,6 +577,9 @@ function openDownload(id, title) {
   $('#dlModal').hidden = false;
 
   const defaultVideo = [
+    { height: 4320, label: '4320p', size: null },
+    { height: 2160, label: '2160p', size: null },
+    { height: 1440, label: '1440p', size: null },
     { height: 1080, label: '1080p', size: null },
     { height: 720, label: '720p', size: null },
     { height: 480, label: '480p', size: null },
@@ -696,11 +699,13 @@ $('#searchForm').addEventListener('submit', e => {
 });
 const dl = new URLSearchParams(location.search).get('dl');
 
-// Wire Get App button
-$('#getAppButton')?.addEventListener('click', () => {
+// Wire Get App buttons
+const openAppModal = () => {
   const appModal = $('#appDownloadModal');
   if (appModal) appModal.hidden = false;
-});
+};
+$('#getAppButton')?.addEventListener('click', openAppModal);
+$('#pGetAppButton')?.addEventListener('click', openAppModal);
 
 async function boot() {
   loadResults(true);

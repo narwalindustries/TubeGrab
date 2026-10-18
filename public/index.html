@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="logo.png">
 <link rel="manifest" href="manifest.json">
 <script src="https://www.youtube.com/iframe_api"></script>
-<link rel="stylesheet" href="style.css?v=20261018_01">
+<link rel="stylesheet" href="style.css?v=20261018_02">
 </head>
 <body>
 <header>
@@ -97,11 +97,23 @@
 <div class="overlay" id="playerModal" hidden>
   <div class="watch-screen" role="dialog" aria-modal="true" aria-label="TubeGrab video player">
     <div class="watch-header">
-      <button class="back-button" type="button" data-close aria-label="Back to videos" title="Back to videos">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-      </button>
-      <div class="watch-title">
-        <a class="logo" href="/" aria-label="TubeGrab home"><img src="logo.png" alt="TubeGrab" width="28" height="28" class="brand-logo-img"><span>TubeGrab</span></a>
+      <div class="watch-header-left">
+        <button class="back-button" type="button" data-close aria-label="Back to videos" title="Back to videos">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        </button>
+        <div class="watch-title">
+          <a class="logo" href="/" aria-label="TubeGrab home"><img src="logo.png" alt="TubeGrab" width="28" height="28" class="brand-logo-img"><span>TubeGrab</span></a>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="pGetAppButton" class="header-btn app-highlight-btn" type="button" aria-label="Get TubeGrab App" title="Get Android & Windows App">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 14.59L8.71 12.3a1 1 0 1 1 1.41-1.41L11 11.77V7a1 1 0 0 1 2 0v4.77l.88-.88a1 1 0 0 1 1.41 1.41z"/></svg>
+          <span>Get App</span>
+        </button>
+        <button id="pDownloadsButton" class="header-btn" type="button" aria-label="Open downloads" title="Downloads">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3"></path></svg>
+          <span>Downloads</span>
+        </button>
       </div>
     </div>
     <div class="watch-content">
@@ -125,7 +137,7 @@
   </div>
 </div>
 
-<script src="config.js?v=20261018_01"></script>
-<script src="app.js?v=20261018_01"></script>
+<script src="config.js?v=20261018_02"></script>
+<script src="app.js?v=20261018_02"></script>
 </body>
 </html>
