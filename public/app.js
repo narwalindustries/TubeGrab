@@ -138,15 +138,55 @@ async function api(url, opts = {}) {
   return d;
 }
 
-function renderVideos(results) {
+function renderShorts(shorts) {
+  if (!shorts || !shorts.length) return '';
+  return `
+    <section class="shorts-shelf">
+      <div class="shorts-header">
+        <svg viewBox="0 0 24 24" class="shorts-icon-svg" aria-hidden="true"><path d="M17.77 10.32l-1.2-.5-1.1-.46 1.05-.59c1.78-.99 2.4-3.23 1.39-5.01-1-1.77-3.24-2.4-5.02-1.39l-7.79 4.39C3.33 7.76 2.68 9.45 3.1 11.1c.36 1.41 1.34 2.52 2.68 3l1.2.5 1.1.46-1.05.59c-1.78.99-2.4 3.23-1.39 5.01 1 1.77 3.24 2.4 5.02 1.39l7.79-4.39c1.77-1 2.42-3.24 1.42-5.01-.36-1.41-1.34-2.52-2.68-3zM10 14.65v-5.3L15 12l-5 2.65z" fill="#ff0000"/></svg>
+        <h2>Shorts</h2>
+      </div>
+      <div class="shorts-carousel">
+        ${shorts.map(s => `
+          <article class="short-card" data-id="${esc(s.id)}" data-title="${esc(s.title)}" data-duration="${Number(s.duration) || 0}">
+            <div class="short-thumb" data-play>
+              <img loading="lazy" decoding="async" src="${esc(s.thumbnail)}" alt="">
+              <span class="shorts-badge">Shorts</span>
+            </div>
+            <div class="short-meta">
+              <h4 data-play title="${esc(s.title)}">${esc(s.title)}</h4>
+              <p>${fmtViews(s.views)}</p>
+              <button class="short-dl" data-dl title="Download Short">
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 5-5m-5 5-5-5M4 17v3h16v-3"></path></svg>
+                <span>Download</span>
+              </button>
+            </div>
+          </article>`).join('')}
+      </div>
+    </section>`;
+}
+
+function renderVideos(results, shorts = []) {
   rememberHomeVideos(results);
   const firstCard = grid.children.length;
-  grid.insertAdjacentHTML('beforeend', results.map((v, index) => `
+  const cardHtml = (v, index, offset = 0) => `
     <article class="card" data-id="${v.id}" data-title="${esc(v.title)}" data-duration="${Number(v.duration) || 0}">
-      <div class="thumb" data-play><img loading="${index < 6 ? 'eager' : 'lazy'}" fetchpriority="${firstCard + index < 3 ? 'high' : 'auto'}" decoding="async" src="${esc(v.thumbnail)}" alt=""><span class="dur">${fmtDur(v.duration)}</span></div>
+      <div class="thumb" data-play><img loading="${offset + index < 6 ? 'eager' : 'lazy'}" fetchpriority="${offset + index < 3 ? 'high' : 'auto'}" decoding="async" src="${esc(v.thumbnail)}" alt=""><span class="dur">${fmtDur(v.duration)}</span></div>
       <div class="meta"><h3 data-play>${esc(v.title)}</h3><p>${esc(v.channel)}${fmtViews(v.views)}</p>
       <button class="dl" data-dl>${downloadButton}</button></div>
-    </article>`).join(''));
+    </article>`;
+
+  if (firstCard === 0 && shorts && shorts.length > 0) {
+    const splitIndex = Math.min(6, results.length);
+    const topBatch = results.slice(0, splitIndex);
+    const bottomBatch = results.slice(splitIndex);
+    let html = topBatch.map((v, i) => cardHtml(v, i, 0)).join('');
+    html += renderShorts(shorts);
+    html += bottomBatch.map((v, i) => cardHtml(v, i, splitIndex)).join('');
+    grid.insertAdjacentHTML('beforeend', html);
+  } else {
+    grid.insertAdjacentHTML('beforeend', results.map((v, i) => cardHtml(v, i, firstCard)).join(''));
+  }
 }
 
 function updatePullIndicator() {
@@ -189,9 +229,9 @@ async function loadResults(reset = false, refresh = false) {
         const params = new URLSearchParams({ q: activeQuery, page: currentPage, feed: feedSeed });
         if (!activeQuery && feedExclusions.length) params.set('exclude', feedExclusions.join(','));
         if (refresh) params.set('refresh', '1');
-        const { results, hasMore: more } = await api('/api/search?' + params);
+        const { results, shorts, hasMore: more } = await api('/api/search?' + params);
         if (token !== searchToken) return;
-        renderVideos(results);
+        renderVideos(results, shorts);
         hasMore = more;
         currentPage++;
         statusEl.textContent = results.length ? '' : (currentPage === 1 ? 'No videos found' : 'You have reached the end');
@@ -319,11 +359,11 @@ document.addEventListener('keydown', e => {
 });
 
 grid.addEventListener('click', e => {
-  const c = e.target.closest('.card'); if (!c) return;
+  const c = e.target.closest('.card, .short-card'); if (!c) return;
   if (e.target.closest('[data-dl]')) {
     openDownload(c.dataset.id, c.dataset.title);
   } else {
-    playerQueue = [...grid.querySelectorAll('.card')].map(card => ({
+    playerQueue = [...grid.querySelectorAll('.card, .short-card')].map(card => ({
       id: card.dataset.id, title: card.dataset.title, duration: Number(card.dataset.duration) || 0,
     }));
     queueIndex = playerQueue.findIndex(video => video.id === c.dataset.id);
@@ -551,6 +591,7 @@ function openDownload(id, title) {
   ];
 
   const formatBadge = (h) => {
+    if (h >= 8640) return '<span class="badge-res badge-16k">16K UHD</span>';
     if (h >= 4320) return '<span class="badge-res badge-8k">8K UHD</span>';
     if (h >= 2160) return '<span class="badge-res badge-4k">4K UHD</span>';
     if (h >= 1440) return '<span class="badge-res badge-2k">2K QHD</span>';
@@ -560,7 +601,7 @@ function openDownload(id, title) {
 
   const cleanLabel = (v) => {
     const raw = String(v.label || `${v.height}p`);
-    return raw.replace(/\s*\((?:8K|4K|2K|HD)\)/gi, '').trim();
+    return raw.replace(/\s*\((?:16K|8K|4K|2K|HD)\)/gi, '').trim();
   };
 
   const renderFormats = (vidFormats, audFormats, curTitle) => {
@@ -635,7 +676,8 @@ async function startJob(id, title, kind, q) {
     }
     setTimeout(() => {
       closeModal($('#dlModal'));
-    }, 1100);
+      openDownloads();
+    }, 900);
   } catch (e) {
     prog.innerHTML = `<p class="err" style="margin:8px 0 0;font-size:12.5px;line-height:1.4;">${esc(e.message)}</p>`;
   }

@@ -489,6 +489,86 @@ async function getInnertubeInfo(id) {
     playbackQualities,
   };
 }
+
+async function getFastVideoInfo(id) {
+  return new Promise((resolve) => {
+    const req = https.get(`https://www.youtube.com/watch?v=${encodeURIComponent(id)}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      timeout: 8000,
+    }, res => {
+      let data = '';
+      res.on('data', chunk => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const m = data.match(/var ytInitialPlayerResponse\s*=\s*({.+?});<\/script>/) ||
+                    data.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+          if (!m) return resolve(null);
+          const json = JSON.parse(m[1]);
+          const details = json.videoDetails || {};
+          const streaming = json.streamingData || {};
+          const fmts = [...(streaming.formats || []), ...(streaming.adaptiveFormats || [])];
+          if (!fmts.length) return resolve(null);
+
+          const audioFmts = fmts.filter(f => f.mimeType && f.mimeType.startsWith('audio/'));
+          const maxAudioSize = Math.max(0, ...audioFmts.map(f => Number(f.contentLength || 0)));
+
+          const byHeight = new Map();
+          for (const f of fmts) {
+            if (!f.height || f.height < 144) continue;
+            const size = Number(f.contentLength || 0);
+            const current = byHeight.get(f.height) || { size: 0, fps: 30 };
+            if (size > current.size) {
+              byHeight.set(f.height, {
+                size,
+                fps: f.fps || 30,
+              });
+            }
+          }
+
+          const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, meta]) => {
+            let tag = '';
+            if (h >= 8640) tag = ' (16K)';
+            else if (h >= 4320) tag = ' (8K)';
+            else if (h >= 2160) tag = ' (4K)';
+            else if (h >= 1440) tag = ' (2K)';
+            else if (h >= 1080) tag = ' (HD)';
+            return {
+              height: h,
+              label: `${h}p${tag}`,
+              size: meta.size ? meta.size + maxAudioSize : null,
+              fps: meta.fps,
+            };
+          });
+
+          const audio = [
+            { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+            { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+            { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+            { q: 'm4a', label: 'M4A · Best (AAC)' },
+            { q: 'opus', label: 'OPUS · Best quality' },
+          ];
+
+          resolve({
+            id,
+            title: details.title || 'YouTube Video',
+            duration: Number(details.lengthSeconds || 0),
+            video,
+            audio,
+            playbackQualities: video.map(v => v.height),
+          });
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+  });
+}
+
 const VAST_HOME_CATEGORIES = [
   // 1. Trending Hindi & Bollywood Hits
   ['trending hindi songs official video', 'bollywood hit songs 2026', 'arijit singh new song official', 'shreya ghoshal songs'],
@@ -678,22 +758,42 @@ const cached = async (key, ttlMs, fn) => {
 
 // ---------- search / home feed ----------
 let homeFeedPool = [];
+let homeShortsPool = [];
 let homeFeedTime = 0;
 const HOME_CACHE_TTL = 15 * 60 * 1000;
 
-async function getHomeFeedVideos(seedNumber = 0) {
-  if (homeFeedPool.length >= 24 && Date.now() - homeFeedTime < HOME_CACHE_TTL) {
-    return homeFeedPool;
+async function fetchCategoryBatch(query, limit = 12) {
+  try {
+    const d = await runJson(['--flat-playlist', '-J', `ytsearch${limit}:${query}`], false);
+    return (d.entries || []).filter(e => e && ID_RE.test(e.id) && !MIX_TITLE_RE.test(e.title || ''));
+  } catch (_) {
+    return [];
+  }
+}
+
+async function getHomeFeedVideos() {
+  if (homeFeedPool.length >= 36 && Date.now() - homeFeedTime < HOME_CACHE_TTL) {
+    return { videos: homeFeedPool, shorts: homeShortsPool };
   }
   try {
-    const numCats = VAST_HOME_CATEGORIES.length;
-    const catIdx = seedNumber % numCats;
-    const list = VAST_HOME_CATEGORIES[catIdx] || VAST_HOME_CATEGORIES[0];
-    const query = list[Math.floor(Math.random() * list.length)] || 'trending hindi punjabi music songs';
-    const d = await runJson(['--flat-playlist', '-J', `ytsearch60:${query}`], false);
-    const raw = (d.entries || []).filter(e => e && ID_RE.test(e.id) && !MIX_TITLE_RE.test(e.title || ''));
-    if (raw.length > 0) {
-      homeFeedPool = raw.map(item => ({
+    const selectedQueries = VAST_HOME_CATEGORIES.map(cat => cat[Math.floor(Math.random() * cat.length)]);
+    const shortsQuery = 'trending funny viral shorts #shorts';
+
+    const [catResults, shortsResult] = await Promise.all([
+      Promise.all(selectedQueries.map(q => fetchCategoryBatch(q, 10))),
+      fetchCategoryBatch(shortsQuery, 12)
+    ]);
+
+    const interleaved = [];
+    const maxItems = Math.max(0, ...catResults.map(r => r.length));
+    for (let i = 0; i < maxItems; i++) {
+      for (const cat of catResults) {
+        if (cat[i]) interleaved.push(cat[i]);
+      }
+    }
+
+    if (interleaved.length > 0) {
+      homeFeedPool = interleaved.map(item => ({
         id: item.id,
         title: item.title,
         channel: item.channel || item.uploader,
@@ -701,12 +801,21 @@ async function getHomeFeedVideos(seedNumber = 0) {
         views: item.view_count,
         thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
       }));
+      homeShortsPool = shortsResult.slice(0, 8).map(item => ({
+        id: item.id,
+        title: item.title,
+        channel: item.channel || item.uploader,
+        duration: item.duration,
+        views: item.view_count,
+        thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+        isShort: true,
+      }));
       homeFeedTime = Date.now();
     }
   } catch (err) {
     console.warn('[HomeFeed] Error fetching:', err.message);
   }
-  return homeFeedPool;
+  return { videos: homeFeedPool, shorts: homeShortsPool };
 }
 
 app.get('/api/search', async (req, res) => {
@@ -716,7 +825,6 @@ app.get('/api/search', async (req, res) => {
   const excludedIds = isHomeFeed
     ? new Set(String(req.query.exclude || '').split(',').filter(id => ID_RE.test(id)))
     : new Set();
-  const seedNumber = [...feedSeed].reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 0);
   const page = Number(req.query.page || 0);
   if (!Number.isInteger(page) || page < 0 || page >= MAX_SEARCH_PAGES)
     return res.status(400).json({ error: 'bad page' });
@@ -724,13 +832,17 @@ app.get('/api/search', async (req, res) => {
 
   try {
     if (isHomeFeed) {
-      const pool = await getHomeFeedVideos(seedNumber);
+      const { videos: pool, shorts } = await getHomeFeedVideos();
       let list = pool.filter(v => !excludedIds.has(v.id));
       if (list.length < SEARCH_PAGE_SIZE) {
         list = pool;
       }
       const results = list.slice(page * SEARCH_PAGE_SIZE, end);
-      return res.json({ results, hasMore: list.length > end && page + 1 < MAX_SEARCH_PAGES });
+      return res.json({
+        results,
+        shorts: page === 0 ? shorts : [],
+        hasMore: list.length > end && page + 1 < MAX_SEARCH_PAGES
+      });
     }
 
     // User Search Query: YouTube-style ranking
@@ -763,70 +875,98 @@ app.get('/api/info', async (req, res) => {
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
   try {
     const info = await cached('i:' + id, 10 * 60e3, async () => {
+      // 1. Instant 800ms extraction directly from YouTube watch page
+      const fast = await getFastVideoInfo(id);
+      if (fast && fast.video && fast.video.length > 0) {
+        return fast;
+      }
+
+      // 2. Try Innertube
+      try {
+        const inner = await getInnertubeInfo(id);
+        if (inner && inner.video && inner.video.length > 0) return inner;
+      } catch (_) {}
+
+      // 3. Fallback to runJson
       let raw = null;
       try {
         raw = await runJson(['-J', 'https://www.youtube.com/watch?v=' + id]);
-      } catch (e) {
-        console.warn('[Info] yt-dlp runJson failed, trying Innertube fallback:', e.message);
-        try {
-          return await getInnertubeInfo(id);
-        } catch (_) {}
-      }
+      } catch (_) {}
 
-      const defaultVideo = [
-        { height: 1080, label: '1080p (HD)', size: null },
-        { height: 720, label: '720p', size: null },
-        { height: 480, label: '480p', size: null },
-        { height: 360, label: '360p', size: null },
-      ];
-      const audio = [
-        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-        { q: 'm4a', label: 'M4A · Best (AAC)' },
-        { q: 'opus', label: 'OPUS · Best quality' },
-      ];
+      if (raw) {
+        const fmts = raw.formats || [];
+        const audioSize = Math.max(0, ...fmts.filter(f => f.vcodec === 'none' && f.acodec !== 'none')
+          .map(f => f.filesize || f.filesize_approx || 0));
+        const byHeight = new Map();
+        for (const f of fmts) {
+          if (!f.vcodec || f.vcodec === 'none' || !f.height || f.height < 144) continue;
+          if (f.protocol === 'mhtml' || f.ext === 'mhtml') continue;
+          if (typeof f.format_note === 'string' && f.format_note.toLowerCase().includes('storyboard')) continue;
+          const size = f.filesize || f.filesize_approx || 0;
+          byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, size));
+        }
+        const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => {
+          let tag = '';
+          if (h >= 8640) tag = ' (16K)';
+          else if (h >= 4320) tag = ' (8K)';
+          else if (h >= 2160) tag = ' (4K)';
+          else if (h >= 1440) tag = ' (2K)';
+          else if (h >= 1080) tag = ' (HD)';
+          return {
+            height: h,
+            label: `${h}p${tag}`,
+            size: s ? s + audioSize : null,
+          };
+        });
 
-      if (!raw) {
+        const audio = [
+          { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+          { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+          { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+          { q: 'm4a', label: 'M4A · Best (AAC)' },
+          { q: 'opus', label: 'OPUS · Best quality' },
+        ];
+
         return {
           id,
-          title: 'YouTube Video',
-          duration: 0,
-          video: defaultVideo,
+          title: raw.title || 'YouTube Video',
+          duration: raw.duration || 0,
+          video: video.length ? video : [
+            { height: 4320, label: '4320p (8K)', size: null },
+            { height: 2160, label: '2160p (4K)', size: null },
+            { height: 1440, label: '1440p (2K)', size: null },
+            { height: 1080, label: '1080p (HD)', size: null },
+            { height: 720, label: '720p', size: null },
+            { height: 480, label: '480p', size: null },
+            { height: 360, label: '360p', size: null },
+          ],
           audio,
-          playbackQualities: [720, 360],
+          playbackQualities: video.map(v => v.height),
         };
       }
 
-      const fmts = raw.formats || [];
-      const audioSize = Math.max(0, ...fmts.filter(f => f.vcodec === 'none' && f.acodec !== 'none')
-        .map(f => f.filesize || f.filesize_approx || 0));
-      const byHeight = new Map();
-      for (const f of fmts) {
-        if (!f.vcodec || f.vcodec === 'none' || !f.height || f.height < 144) continue;
-        if (f.protocol === 'mhtml' || f.ext === 'mhtml') continue;
-        if (typeof f.format_note === 'string' && f.format_note.toLowerCase().includes('storyboard')) continue;
-        const size = f.filesize || f.filesize_approx || 0;
-        byHeight.set(f.height, Math.max(byHeight.get(f.height) || 0, size));
-      }
-      const video = [...byHeight.entries()].sort((a, b) => b[0] - a[0]).map(([h, s]) => ({
-        height: h, label: h + 'p' + (h >= 4320 ? ' (8K)' : h >= 2160 ? ' (4K)' : h >= 1440 ? ' (2K)' : h >= 1080 ? ' (HD)' : ''),
-        size: s ? s + audioSize : null,
-      }));
-      const playableFormats = fmts.filter(f => f.ext === 'mp4' && f.height
-        && typeof f.vcodec === 'string' && f.vcodec.startsWith('avc1'));
-      const hasDirectFormats = playableFormats.some(f => f.protocol === 'https');
-      const playbackQualities = [...new Set(playableFormats
-        .filter(f => !hasDirectFormats || f.protocol === 'https')
-        .map(f => f.height))].sort((a, b) => b - a);
-
+      // 4. Default fallback with full resolution spectrum
       return {
         id,
-        title: raw.title || 'YouTube Video',
-        duration: raw.duration || 0,
-        video: video.length ? video : defaultVideo,
-        audio,
-        playbackQualities: playbackQualities.length ? playbackQualities : [720, 360],
+        title: 'YouTube Video',
+        duration: 0,
+        video: [
+          { height: 4320, label: '4320p (8K)', size: null },
+          { height: 2160, label: '2160p (4K)', size: null },
+          { height: 1440, label: '1440p (2K)', size: null },
+          { height: 1080, label: '1080p (HD)', size: null },
+          { height: 720, label: '720p', size: null },
+          { height: 480, label: '480p', size: null },
+          { height: 360, label: '360p', size: null },
+        ],
+        audio: [
+          { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+          { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+          { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+          { q: 'm4a', label: 'M4A · Best (AAC)' },
+          { q: 'opus', label: 'OPUS · Best quality' },
+        ],
+        playbackQualities: [4320, 2160, 1440, 1080, 720, 360],
       };
     });
     res.json(info);
@@ -1057,9 +1197,9 @@ function getDownloadArgs(kind, q) {
   let args;
   if (kind === 'video') {
     const h = parseInt(q, 10);
-    if (!(h >= 100 && h <= 4320)) return null;
+    if (!(h >= 100 && h <= 8640)) return null;
     args = [
-      '-f', `bv*[height=${h}]+ba/bv*[height<=${h}]+ba/b[height<=${h}]/b`,
+      '-f', `bv*[height=${h}]+ba/bv*[height<=${h}]+ba/bestvideo[height<=${h}]+bestaudio/best`,
       '-S', `res:${h}`,
       '--merge-output-format', 'mp4',
     ];
