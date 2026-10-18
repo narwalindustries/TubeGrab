@@ -131,6 +131,10 @@ async function api(url, opts = {}) {
   if (key) {
     headers['x-api-key'] = key;
   }
+  const userCookies = localStorage.getItem('tubegrab_yt_cookies');
+  if (userCookies) {
+    headers['x-yt-cookies'] = userCookies;
+  }
   options.headers = headers;
   const r = await fetch(fullUrl, options);
   const d = await r.json().catch(() => ({}));
@@ -332,13 +336,12 @@ function openPlayer(id, title, duration = 0) {
     iframe.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&playsinline=1&rel=0`;
   }
 
-  if (!title) {
-    api(`/api/info?id=${encodeURIComponent(id)}`).then(info => {
-      if (activeVideoId !== id) return;
-      if (pDl) pDl.onclick = () => openDownload(id, info.title || title);
-      activeDuration = info.duration || activeDuration || 0;
-    }).catch(() => {});
-  }
+  // Pre-fetch actual video qualities in background so download modal opens instantly with real formats
+  fetchVideoInfo(id).then(info => {
+    if (activeVideoId !== id) return;
+    if (pDl) pDl.onclick = () => openDownload(id, info.title || title);
+    activeDuration = info.duration || activeDuration || 0;
+  }).catch(() => {});
 }
 
 function closeModal(m) {
@@ -579,20 +582,20 @@ $('#downloadsList').addEventListener('click', async event => {
   }
 });
 
+const videoInfoCache = new Map();
+function fetchVideoInfo(id) {
+  if (videoInfoCache.has(id)) return Promise.resolve(videoInfoCache.get(id));
+  return api(`/api/info?id=${encodeURIComponent(id)}`).then(info => {
+    videoInfoCache.set(id, info);
+    return info;
+  });
+}
+
 function openDownload(id, title) {
   const resolvedTitle = (title && title !== 'YouTube Video') ? title : 'YouTube Video';
   $('#dTitle').textContent = resolvedTitle;
   $('#dlModal').hidden = false;
 
-  const defaultVideo = [
-    { height: 4320, label: '4320p', size: null },
-    { height: 2160, label: '2160p', size: null },
-    { height: 1440, label: '1440p', size: null },
-    { height: 1080, label: '1080p', size: null },
-    { height: 720, label: '720p', size: null },
-    { height: 480, label: '480p', size: null },
-    { height: 360, label: '360p', size: null },
-  ];
   const defaultAudio = [
     { q: 'mp3-320', label: 'MP3 · 320 kbps' },
     { q: 'mp3-192', label: 'MP3 · 192 kbps' },
@@ -623,9 +626,10 @@ function openDownload(id, title) {
         <small>${fmtSize(size)}</small>
       </button>`;
     const body = $('#dBody');
+    const hasVideo = vidFormats && vidFormats.length > 0;
     body.innerHTML = `
       <div class="tabs"><button class="tab on" data-tab="video">🎬 Video (MP4)</button><button class="tab" data-tab="audio">🎵 Audio</button></div>
-      <div class="opts" id="tab-video" style="display:grid">${vidFormats.map(v => optBtn('video', v.height, cleanLabel(v), v.size, formatBadge(v.height))).join('')}</div>
+      <div class="opts" id="tab-video" style="display:grid">${hasVideo ? vidFormats.map(v => optBtn('video', v.height, cleanLabel(v), v.size, formatBadge(v.height))).join('') : '<div style="padding:24px;text-align:center;color:#aaa">No direct video streams found.</div>'}</div>
       <div class="opts" id="tab-audio" hidden style="display:none">${audFormats.map(a => optBtn('audio', a.q, a.label)).join('')}</div>
       <div id="prog"></div>`;
     body.querySelectorAll('.tab').forEach(t => t.onclick = () => {
@@ -644,33 +648,51 @@ function openDownload(id, title) {
     body.querySelectorAll('.opt').forEach(b => b.onclick = () => startJob(id, curTitle, b.dataset.kind, b.dataset.q));
   };
 
-  // 1. Render all format qualities IMMEDIATELY (0ms latency - instant!)
-  renderFormats(defaultVideo, defaultAudio, resolvedTitle);
+  // If already fetched/cached, render real formats instantly
+  if (videoInfoCache.has(id)) {
+    const info = videoInfoCache.get(id);
+    const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
+    renderFormats(info.video || [], info.audio || defaultAudio, t);
+    return;
+  }
 
-  // 2. Silently enrich real file sizes in background without blocking user
-  const ctrl = new AbortController();
-  const tid = setTimeout(() => ctrl.abort(), 2000);
-  fetch(resolveUrl('/api/info?id=' + encodeURIComponent(id)), { signal: ctrl.signal })
-    .then(r => r.json())
+  // Otherwise, show clean quality detection spinner
+  const body = $('#dBody');
+  body.innerHTML = `
+    <div class="opts-loading">
+      <div class="spinner"></div>
+      <div style="font-size:14px;color:#eee;font-weight:600;">Detecting available qualities…</div>
+      <div style="font-size:12px;color:#888;">Checking supported video resolutions</div>
+    </div>
+  `;
+
+  fetchVideoInfo(id)
     .then(info => {
-      clearTimeout(tid);
       if ($('#dlModal').hidden) return;
       const t = (info.title && info.title !== 'YouTube Video') ? info.title : resolvedTitle;
-      const vidFormats = (info.video && info.video.length) ? info.video : defaultVideo;
+      const vidFormats = (info.video && info.video.length) ? info.video : [];
       const audFormats = (info.audio && info.audio.length) ? info.audio : defaultAudio;
       renderFormats(vidFormats, audFormats, t);
     })
-    .catch(() => {});
+    .catch(() => {
+      if ($('#dlModal').hidden) return;
+      renderFormats([
+        { height: 1080, label: '1080p', size: null },
+        { height: 720, label: '720p', size: null },
+        { height: 360, label: '360p', size: null },
+      ], defaultAudio, resolvedTitle);
+    });
 }
 
 async function startJob(id, title, kind, q) {
   const prog = $('#prog');
   prog.innerHTML = '<p style="color:#71dda0;margin:6px 0 0;font-weight:600;">Connecting to processing engine…</p>';
   try {
+    const userCookies = localStorage.getItem('tubegrab_yt_cookies') || '';
     const res = await api('/api/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, title, kind, q }),
+      body: JSON.stringify({ id, title, kind, q, cookies: userCookies }),
     });
     if (res.jobId) {
       pendingAutoDownloads.add(res.jobId);
@@ -690,6 +712,127 @@ async function startJob(id, title, kind, q) {
     prog.innerHTML = `<p class="err" style="margin:8px 0 0;font-size:12.5px;line-height:1.4;">${esc(e.message)}</p>`;
   }
 }
+
+// ---------- Cookie Management Logic ----------
+function updateCookieUI() {
+  const userCookies = localStorage.getItem('tubegrab_yt_cookies');
+  const hasCookies = Boolean(userCookies && userCookies.trim().length > 10);
+  
+  const b1 = $('#cookiesButton');
+  const b2 = $('#pCookiesButton');
+  const l1 = $('#cookiesStatusLabel');
+  const l2 = $('#pCookiesStatusLabel');
+  const badge = $('#cookiesActiveBadge');
+
+  if (hasCookies) {
+    if (b1) b1.classList.add('cookies-connected');
+    if (b2) b2.classList.add('cookies-connected');
+    if (l1) l1.textContent = 'Cookies ✓';
+    if (l2) l2.textContent = 'Cookies ✓';
+    if (badge) {
+      badge.textContent = '✅ Connected: TubeGrab is using your browser YouTube session';
+      badge.classList.add('connected');
+    }
+  } else {
+    if (b1) b1.classList.remove('cookies-connected');
+    if (b2) b2.classList.remove('cookies-connected');
+    if (l1) l1.textContent = 'Cookies';
+    if (l2) l2.textContent = 'Cookies';
+    if (badge) {
+      badge.textContent = '⚪ No personal cookies connected (Downloads use public engines)';
+      badge.classList.remove('connected');
+    }
+  }
+}
+
+function openCookiesModal() {
+  const m = $('#cookiesModal');
+  if (!m) return;
+  m.hidden = false;
+  updateCookieUI();
+  const input = $('#cookiesInput');
+  if (input) {
+    input.value = localStorage.getItem('tubegrab_yt_cookies') || '';
+  }
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  const desktopSec = $('#desktopCookieSection');
+  if (desktopSec) {
+    desktopSec.hidden = !isLocal;
+  }
+}
+
+function saveCookies() {
+  const input = $('#cookiesInput');
+  const val = (input?.value || '').trim();
+  if (val.length < 5) {
+    alert('Please enter or paste valid cookie text first.');
+    return;
+  }
+  localStorage.setItem('tubegrab_yt_cookies', val);
+  updateCookieUI();
+  alert('YouTube browser cookies saved! Your downloads will now use your session.');
+  closeModal($('#cookiesModal'));
+}
+
+function clearCookies() {
+  localStorage.removeItem('tubegrab_yt_cookies');
+  const input = $('#cookiesInput');
+  if (input) input.value = '';
+  updateCookieUI();
+  alert('YouTube cookies cleared.');
+}
+
+function handleCookieFileUpload(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (event) => {
+    const text = event.target?.result;
+    if (typeof text === 'string' && text.trim().length > 10) {
+      localStorage.setItem('tubegrab_yt_cookies', text.trim());
+      const input = $('#cookiesInput');
+      if (input) input.value = text.trim();
+      updateCookieUI();
+      alert(`Loaded ${file.name}! Your downloads will now use these cookies.`);
+    } else {
+      alert('The uploaded file appears to be empty or invalid.');
+    }
+  };
+  reader.readAsText(file);
+}
+
+async function syncDesktopCookies() {
+  const select = $('#desktopBrowserSelect');
+  const browser = select?.value || 'chrome';
+  const btn = $('#syncDesktopCookiesBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Extracting…';
+  }
+  try {
+    const res = await api('/api/sync-browser-cookies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ browser })
+    });
+    alert(res.message || `Successfully linked cookies from ${browser}!`);
+    updateCookieUI();
+  } catch (err) {
+    alert('Could not extract cookies automatically: ' + err.message + '\n\nTip: Use Method 1 to paste cookies directly.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Extract from Browser';
+    }
+  }
+}
+
+$('#cookiesButton')?.addEventListener('click', openCookiesModal);
+$('#pCookiesButton')?.addEventListener('click', openCookiesModal);
+$('#saveCookiesBtn')?.addEventListener('click', saveCookies);
+$('#clearCookiesBtn')?.addEventListener('click', clearCookies);
+$('#cookieFileInput')?.addEventListener('change', handleCookieFileUpload);
+$('#syncDesktopCookiesBtn')?.addEventListener('click', syncDesktopCookies);
 
 const handleSearchSubmit = (inputEl) => {
   const v = (inputEl?.value || '').trim();
@@ -729,6 +872,7 @@ $('#getAppButton')?.addEventListener('click', openAppModal);
 $('#pGetAppButton')?.addEventListener('click', openAppModal);
 
 async function boot() {
+  updateCookieUI();
   loadResults(true);
   refreshDownloads();
   if (dl && /^[\w-]{11}$/.test(dl)) openDownload(dl, '');

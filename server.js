@@ -321,6 +321,36 @@ const { Innertube, UniversalCache, Platform, Log } = require('youtubei.js');
 Log.setLevel(Log.Level.NONE);
 Platform.shim.eval = async (d) => new Function(d.output)();
 
+function cookieStringToNetscape(cookieStr) {
+  if (!cookieStr || typeof cookieStr !== 'string') return '';
+  if (cookieStr.includes('# Netscape HTTP Cookie File')) return cookieStr.trim() + '\n';
+  const lines = ['# Netscape HTTP Cookie File', '# Created by TubeGrab User Session'];
+  const parts = cookieStr.split(';');
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    const name = trimmed.slice(0, eq).trim();
+    const val = trimmed.slice(eq + 1).trim();
+    if (!name) continue;
+    lines.push(`.youtube.com\tTRUE\t/\tTRUE\t${Math.floor(Date.now() / 1000) + 31536000}\t${name}\t${val}`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+function createUserCookieFile(userCookies, targetDir = TMP) {
+  if (!userCookies || typeof userCookies !== 'string' || userCookies.trim().length < 5) return null;
+  const content = cookieStringToNetscape(userCookies.trim());
+  const filePath = path.join(targetDir, `user_cookie_${crypto.randomBytes(6).toString('hex')}.txt`);
+  try {
+    fs.writeFileSync(filePath, content, 'utf8');
+    return filePath;
+  } catch (_) {
+    return null;
+  }
+}
+
 function getCookiesPath() {
   if (process.env.YT_COOKIES && fs.existsSync(process.env.YT_COOKIES)) return process.env.YT_COOKIES;
   const local = path.join(__dirname, 'cookies.txt');
@@ -349,40 +379,31 @@ function syncCookiesFromBrowser(force = false) {
   if (!force && fs.existsSync(local) && (Date.now() - fs.statSync(local).mtimeMs < 6 * 3600 * 1000)) return;
 
   const ytdlpBin = resolveBinary('yt-dlp');
-  if (ytdlpBin && fs.existsSync(ytdlpBin)) {
-    for (const browser of ['brave', 'chrome', 'edge', 'firefox']) {
-      try {
-        const p = spawn(ytdlpBin, ['--cookies-from-browser', browser, '--cookies', local, '--skip-download', 'https://www.youtube.com'], {
-          cwd: __dirname,
-          windowsHide: true,
-          stdio: 'ignore'
-        });
-        p.on('close', code => {
-          if (code === 0 && fs.existsSync(local) && fs.statSync(local).size > 100) {
-            innertubePromise = null;
-          }
-        });
-        break;
-      } catch (_) {}
-    }
-  } else {
-    const pyScript = `
-import yt_dlp
-for b in ['brave', 'chrome', 'edge', 'firefox']:
-    try:
-        ydl_opts = {'cookiesfrombrowser': (b, None, None, None), 'cookiefile': 'cookies.txt', 'quiet': True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.cookiejar.save('cookies.txt', ignore_discard=True, ignore_expires=True)
-            break
-    except Exception:
-        continue
-`;
-    const pythonBin = resolvePython();
+  if (!ytdlpBin || !fs.existsSync(ytdlpBin)) return;
+
+  const tryBrowser = (browserList) => {
+    if (!browserList.length) return;
+    const browser = browserList[0];
     try {
-      const p = spawn(pythonBin, ['-c', pyScript], { cwd: __dirname, windowsHide: true, stdio: 'ignore' });
-      p.on('close', () => { innertubePromise = null; });
-    } catch (_) {}
-  }
+      const p = spawn(ytdlpBin, ['--cookies-from-browser', browser, '--cookies', local, '--skip-download', 'https://www.youtube.com'], {
+        cwd: __dirname,
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+      p.on('close', code => {
+        if (code === 0 && fs.existsSync(local) && fs.statSync(local).size > 100) {
+          console.log(`[Cookies] Successfully extracted cookies from ${browser}`);
+          innertubePromise = null;
+        } else {
+          tryBrowser(browserList.slice(1));
+        }
+      });
+      p.on('error', () => tryBrowser(browserList.slice(1)));
+    } catch (_) {
+      tryBrowser(browserList.slice(1));
+    }
+  };
+  tryBrowser(['chrome', 'edge', 'brave', 'firefox']);
 }
 syncCookiesFromBrowser();
 setInterval(() => syncCookiesFromBrowser(true), 6 * 3600 * 1000);
@@ -495,16 +516,43 @@ async function getInnertubeInfo(id) {
   };
 }
 
-async function getFastVideoInfo(id) {
+async function getFastVideoInfo(id, userCookies = '') {
   return new Promise((resolve) => {
     const fetchPage = (targetUrl, depth = 0) => {
       if (depth > 2) return resolve(null);
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      };
+      if (userCookies && typeof userCookies === 'string') {
+        if (userCookies.includes('# Netscape HTTP Cookie File')) {
+          const pairs = [];
+          for (const line of userCookies.split('\n')) {
+            if (!line || line.startsWith('#')) continue;
+            const p = line.split('\t');
+            if (p.length >= 7) pairs.push(`${p[5]}=${p[6]}`);
+          }
+          if (pairs.length) headers['Cookie'] = pairs.join('; ');
+        } else {
+          headers['Cookie'] = userCookies;
+        }
+      } else {
+        const sCookie = getCookiesPath();
+        if (sCookie && fs.existsSync(sCookie)) {
+          try {
+            const pairs = [];
+            for (const line of fs.readFileSync(sCookie, 'utf8').split('\n')) {
+              if (!line || line.startsWith('#')) continue;
+              const p = line.split('\t');
+              if (p.length >= 7) pairs.push(`${p[5]}=${p[6]}`);
+            }
+            if (pairs.length) headers['Cookie'] = pairs.join('; ');
+          } catch (_) {}
+        }
+      }
       const req = https.get(targetUrl, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-        timeout: 4000,
+        headers,
+        timeout: 4500,
       }, res => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return fetchPage(res.headers.location, depth + 1);
@@ -681,7 +729,8 @@ app.get('/api/debug', async (req, res) => {
   }
 
   res.json({
-    deployTime: '2026-10-18-11:05',
+    deployTime: '2026-10-18-11:45',
+    hasCookies: Boolean(getCookiesPath()),
     ytdlp: { path: binary, version, error: versionErr },
     innertube: { status: innerStatus, hasUrl: !!innerUrl, error: innerErr }
   });
@@ -769,96 +818,68 @@ const cached = async (key, ttlMs, fn) => {
   return pending;
 };
 
-// ---------- search / home feed ----------
-const INITIAL_HOME_VIDEOS = [
-  { id: 'ri1Ar5nEq4s', title: 'Aaj Ki Raat - 8K Video | Stree 2 | Tamannaah Bhatia, Rajkummar Rao | Sachin-Jigar', channel: 'Saregama Music', duration: 277, views: 98000000 },
-  { id: 'sA8y_ZtX5vY', title: 'Tauba Tauba | Bad Newz | Vicky Kaushal | Karan Aujla | T-Series', channel: 'T-Series', duration: 208, views: 185000000 },
-  { id: '1k8craCGpgs', title: 'Aayi Nai | Stree 2 | Shraddha Kapoor, Rajkummar Rao | Sachin-Jigar', channel: 'Saregama Music', duration: 180, views: 140000000 },
-  { id: 'gnhXHvRoUd0', title: 'Husn | Anuv Jain (Official Music Video)', channel: 'Anuv Jain', duration: 220, views: 110000000 },
-  { id: 'XO8wew38VM8', title: 'Millionaire Song | Glory | Yo Yo Honey Singh | Bhushan Kumar', channel: 'T-Series', duration: 202, views: 88000000 },
-  { id: 'cWMxCE2HTag', title: 'Softly | Karan Aujla | Ikky | Four Me (Official Music Video)', channel: 'Karan Aujla', duration: 154, views: 120000000 },
-  { id: 'Tccq_V8dFmU', title: 'Winning Speech | Karan Aujla | Mxrci | Street Dreams', channel: 'Karan Aujla', duration: 198, views: 76000000 },
-  { id: 'VAdGW7QDJUI', title: 'Chaleya | Jawan | Shah Rukh Khan | Nayanthara | Atlee | Anirudh | Arijit Singh', channel: 'T-Series', duration: 190, views: 240000000 },
-  { id: 'BddP6PYo2gs', title: 'Kesariya - Brahmāstra | Ranbir Kapoor | Alia Bhatt | Pritam | Arijit Singh', channel: 'Sony Music India', duration: 268, views: 560000000 },
-  { id: 'kPa7bsKwL-8', title: 'Lady Gaga, Bruno Mars - Die With A Smile (Official Music Video)', channel: 'Lady Gaga', duration: 252, views: 320000000 },
-  { id: 'eVli-tstM5E', title: 'Sabrina Carpenter - Espresso (Official Video)', channel: 'Sabrina Carpenter', duration: 185, views: 210000000 },
-  { id: 'd5gf9dXbPi0', title: 'Billie Eilish - BIRDS OF A FEATHER (Official Music Video)', channel: 'Billie Eilish', duration: 205, views: 190000000 },
-  { id: 'H58vbez_m4E', title: 'Kendrick Lamar - Not Like Us (Official Music Video)', channel: 'Kendrick Lamar', duration: 274, views: 180000000 },
-  { id: '34Na4j8AVgA', title: 'The Weeknd - Starboy ft. Daft Punk (Official Music Video)', channel: 'The Weeknd', duration: 230, views: 2400000000 },
-  { id: '4NRXx6U8ABQ', title: 'The Weeknd - Blinding Lights (Official Video)', channel: 'The Weeknd', duration: 260, views: 820000000 },
-  { id: 'JGwWNGJdvx8', title: 'Ed Sheeran - Shape of You (Official Music Video)', channel: 'Ed Sheeran', duration: 263, views: 6300000000 },
-  { id: '7wtfhZwyrcc', title: 'Imagine Dragons - Believer (Official Music Video)', channel: 'ImagineDragons', duration: 216, views: 2600000000 },
-  { id: '60ItHLz5WEA', title: 'Alan Walker - Faded', channel: 'Alan Walker', duration: 212, views: 3600000000 },
-  { id: 'cl0a3i2wFcc', title: 'Smartphone Awards 2024! | MKBHD', channel: 'Marques Brownlee', duration: 1240, views: 4800000 },
-  { id: 'w4ClQO0FFQg', title: 'iPhone 16 Pro Review: What Happened? | MKBHD', channel: 'Marques Brownlee', duration: 920, views: 5400000 },
-  { id: 'bHIhgxav9LY', title: 'Why The Universe is Not Locally Real | Veritasium', channel: 'Veritasium', duration: 1780, views: 11000000 },
-  { id: 'fJ9rUzIMcZQ', title: 'Queen - Bohemian Rhapsody (Official Video Remastered)', channel: 'Queen Official', duration: 360, views: 1700000000 },
-  { id: 'kJQP7kiw5Fk', title: 'Luis Fonsi - Despacito ft. Daddy Yankee', channel: 'Luis Fonsi', duration: 282, views: 8500000000 },
-  { id: 'OPf0YbXqDm0', title: 'Mark Ronson - Uptown Funk ft. Bruno Mars', channel: 'Mark Ronson', duration: 271, views: 5300000000 },
-].map(item => ({
-  ...item,
-  thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`
-}));
+// ---------- search / real live home feed ----------
+let homeFeedPool = [];
+let homeShortsPool = [];
+let homeFeedTime = 0;
+let homeFeedLoadingPromise = null;
+const HOME_CACHE_TTL = 15 * 60 * 1000;
 
-const INITIAL_HOME_SHORTS = [
-  { id: '3jz_30mP2Zk', title: 'Satisfying Kinetic Sand Cut #shorts', channel: 'Sand Tagious', duration: 25, views: 42000000, isShort: true },
-  { id: 'b47w87j_kXU', title: 'Mind Blowing Magic Trick Revealed #shorts', channel: 'Zach King', duration: 18, views: 89000000, isShort: true },
-  { id: 'L_LUpnjgPso', title: 'When you drop your phone in public #shorts', channel: 'CalebCity', duration: 32, views: 18000000, isShort: true },
-  { id: 'XqZsoesa55w', title: 'Crazy Domino Chain Reaction #shorts', channel: 'Hevesh5', duration: 45, views: 65000000, isShort: true },
-  { id: 'Y8Wp3dafaMQ', title: 'Incredible Beatbox Sounds #shorts', channel: 'Spencer X', duration: 22, views: 38000000, isShort: true },
-  { id: '79DijItQXMM', title: 'Fastest Speedcuber in the World #shorts', channel: 'CubeHead', duration: 20, views: 24000000, isShort: true },
-  { id: 'nFSXmY1X0z0', title: 'Most Satisfying Clay Cracking #shorts', channel: 'ASMR Studio', duration: 35, views: 31000000, isShort: true },
-  { id: 'zSWdZVtXT7E', title: 'Insane Card Throwing Precision #shorts', channel: 'Rick Smith Jr', duration: 28, views: 52000000, isShort: true },
-].map(item => ({
-  ...item,
-  thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`
-}));
+async function fetchRealHomeFeed() {
+  if (homeFeedLoadingPromise) return homeFeedLoadingPromise;
+  homeFeedLoadingPromise = (async () => {
+    try {
+      console.log('[HomeFeed] Fetching real live trending videos and shorts from YouTube...');
+      const [videoData, shortsData] = await Promise.all([
+        runJson(['--flat-playlist', '-J', 'ytsearch36:trending'], false).catch(() => null),
+        runJson(['--flat-playlist', '-J', 'ytsearch12:trending shorts #shorts'], false).catch(() => null),
+      ]);
 
-let homeFeedPool = [...INITIAL_HOME_VIDEOS];
-let homeShortsPool = [...INITIAL_HOME_SHORTS];
-let homeFeedTime = Date.now();
-let isRefreshingHomeFeed = false;
-const HOME_CACHE_TTL = 30 * 60 * 1000;
+      const rawVideos = (videoData?.entries || []).filter(e => e && ID_RE.test(e.id) && !MIX_TITLE_RE.test(e.title || ''));
+      if (rawVideos.length > 0) {
+        homeFeedPool = rawVideos.map(item => ({
+          id: item.id,
+          title: item.title,
+          channel: item.channel || item.uploader || 'YouTube',
+          duration: item.duration || 0,
+          views: item.view_count || 0,
+          thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+        }));
+        homeFeedTime = Date.now();
+        console.log(`[HomeFeed] Successfully loaded ${homeFeedPool.length} real trending videos from YouTube.`);
+      }
 
-async function fetchCategoryBatch(query, limit = 12) {
-  try {
-    const d = await runJson(['--flat-playlist', '-J', `ytsearch${limit}:${query}`], false);
-    return (d.entries || []).filter(e => e && ID_RE.test(e.id) && !MIX_TITLE_RE.test(e.title || ''));
-  } catch (_) {
-    return [];
-  }
-}
-
-async function refreshHomeFeedBackground() {
-  if (isRefreshingHomeFeed) return;
-  isRefreshingHomeFeed = true;
-  try {
-    const selectedQueries = VAST_HOME_CATEGORIES.map(cat => cat[Math.floor(Math.random() * cat.length)]);
-    const catResults = await Promise.all(selectedQueries.slice(0, 3).map(q => fetchCategoryBatch(q, 8)));
-    const flat = catResults.flat().filter(Boolean);
-    if (flat.length >= 12) {
-      homeFeedPool = flat.map(item => ({
-        id: item.id,
-        title: item.title,
-        channel: item.channel || item.uploader,
-        duration: item.duration,
-        views: item.view_count,
-        thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
-      }));
-      homeFeedTime = Date.now();
+      const rawShorts = (shortsData?.entries || []).filter(e => e && ID_RE.test(e.id));
+      if (rawShorts.length > 0) {
+        homeShortsPool = rawShorts.map(item => ({
+          id: item.id,
+          title: item.title,
+          channel: item.channel || item.uploader || 'YouTube',
+          duration: item.duration || 0,
+          views: item.view_count || 0,
+          thumbnail: `https://i.ytimg.com/vi/${item.id}/hqdefault.jpg`,
+          isShort: true,
+        }));
+        console.log(`[HomeFeed] Successfully loaded ${homeShortsPool.length} real trending shorts.`);
+      }
+    } catch (err) {
+      console.error('[HomeFeed] Failed to load real home feed:', err.message);
+    } finally {
+      homeFeedLoadingPromise = null;
     }
-  } catch (_) {}
-  finally { isRefreshingHomeFeed = false; }
+  })();
+  return homeFeedLoadingPromise;
 }
 
 async function getHomeFeedVideos() {
-  // Always return immediately (instant sub-second response!)
-  if (Date.now() - homeFeedTime > HOME_CACHE_TTL && !isRefreshingHomeFeed) {
-    refreshHomeFeedBackground();
+  if (homeFeedPool.length === 0) {
+    await fetchRealHomeFeed();
+  } else if (Date.now() - homeFeedTime > HOME_CACHE_TTL) {
+    fetchRealHomeFeed().catch(() => {});
   }
   return {
-    videos: homeFeedPool.length >= 12 ? homeFeedPool : INITIAL_HOME_VIDEOS,
-    shorts: homeShortsPool.length >= 4 ? homeShortsPool : INITIAL_HOME_SHORTS,
+    videos: homeFeedPool,
+    shorts: homeShortsPool,
   };
 }
 
@@ -917,23 +938,51 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/info', async (req, res) => {
   const id = String(req.query.id || '');
   if (!ID_RE.test(id)) return res.status(400).json({ error: 'bad id' });
+  const userCookies = req.headers['x-yt-cookies'] || req.query.cookies || '';
+
   try {
-    const info = await cached('i:' + id, 10 * 60e3, async () => {
-      // 1. Instant 800ms extraction directly from YouTube watch page
-      const fast = await getFastVideoInfo(id);
+    const cookieHash = userCookies ? ':' + crypto.createHash('md5').update(userCookies).digest('hex').slice(0, 8) : '';
+    const info = await cached('i:' + id + cookieHash, 10 * 60e3, async () => {
+      // 1. Fast direct extraction from YouTube watch page
+      const fast = await getFastVideoInfo(id, userCookies);
       if (fast && fast.video && fast.video.length > 0) {
         return fast;
       }
 
-      // 2. Fast yt-dlp metadata extraction with JS challenge solving
+      // 2. yt-dlp metadata extraction
+      let userCookiePath = null;
+      if (userCookies) {
+        userCookiePath = createUserCookieFile(userCookies);
+      }
+      const ytdlpArgs = ['--extractor-args', 'youtube:player_client=visionos', '--dump-json', '--skip-download'];
+      if (userCookiePath) {
+        ytdlpArgs.push('--cookies', userCookiePath);
+      }
+      ytdlpArgs.push('https://www.youtube.com/watch?v=' + id);
+
       let raw = null;
       try {
-        raw = await runJson(['--extractor-args', 'youtube:player_client=visionos', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+        raw = await runJson(ytdlpArgs);
       } catch (_) {
         try {
-          raw = await runJson(['--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+          const fallbackArgs = ['--dump-json', '--skip-download'];
+          if (userCookiePath) fallbackArgs.push('--cookies', userCookiePath);
+          fallbackArgs.push('https://www.youtube.com/watch?v=' + id);
+          raw = await runJson(fallbackArgs);
         } catch (_) {}
+      } finally {
+        if (userCookiePath) {
+          try { fs.unlinkSync(userCookiePath); } catch (_) {}
+        }
       }
+
+      const audio = [
+        { q: 'mp3-320', label: 'MP3 · 320 kbps' },
+        { q: 'mp3-192', label: 'MP3 · 192 kbps' },
+        { q: 'mp3-128', label: 'MP3 · 128 kbps' },
+        { q: 'm4a', label: 'M4A · Best (AAC)' },
+        { q: 'opus', label: 'OPUS · Best quality' },
+      ];
 
       if (raw) {
         const fmts = raw.formats || [];
@@ -961,25 +1010,13 @@ app.get('/api/info', async (req, res) => {
           };
         });
 
-        const audio = [
-          { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-          { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-          { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-          { q: 'm4a', label: 'M4A · Best (AAC)' },
-          { q: 'opus', label: 'OPUS · Best quality' },
-        ];
-
         return {
           id,
           title: raw.title || 'YouTube Video',
           duration: raw.duration || 0,
           video: video.length ? video : [
-            { height: 4320, label: '4320p (8K)', size: null },
-            { height: 2160, label: '2160p (4K)', size: null },
-            { height: 1440, label: '1440p (2K)', size: null },
             { height: 1080, label: '1080p (HD)', size: null },
             { height: 720, label: '720p', size: null },
-            { height: 480, label: '480p', size: null },
             { height: 360, label: '360p', size: null },
           ],
           audio,
@@ -987,28 +1024,18 @@ app.get('/api/info', async (req, res) => {
         };
       }
 
-      // 4. Default fallback with full resolution spectrum
+      // Safe fallback if extraction failed completely
       return {
         id,
         title: 'YouTube Video',
         duration: 0,
         video: [
-          { height: 4320, label: '4320p (8K)', size: null },
-          { height: 2160, label: '2160p (4K)', size: null },
-          { height: 1440, label: '1440p (2K)', size: null },
           { height: 1080, label: '1080p (HD)', size: null },
           { height: 720, label: '720p', size: null },
-          { height: 480, label: '480p', size: null },
           { height: 360, label: '360p', size: null },
         ],
-        audio: [
-          { q: 'mp3-320', label: 'MP3 · 320 kbps' },
-          { q: 'mp3-192', label: 'MP3 · 192 kbps' },
-          { q: 'mp3-128', label: 'MP3 · 128 kbps' },
-          { q: 'm4a', label: 'M4A · Best (AAC)' },
-          { q: 'opus', label: 'OPUS · Best quality' },
-        ],
-        playbackQualities: [4320, 2160, 1440, 1080, 720, 360],
+        audio,
+        playbackQualities: [1080, 720, 360],
       };
     });
     res.json(info);
@@ -1336,6 +1363,14 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
     '--concurrent-fragments', '4',
     '--windows-filenames',
   ];
+  if (job.cookieFile && fs.existsSync(job.cookieFile)) {
+    const cIdx = pArgs.indexOf('--cookies');
+    if (cIdx !== -1) {
+      pArgs[cIdx + 1] = job.cookieFile;
+    } else {
+      pArgs.push('--cookies', job.cookieFile);
+    }
+  }
   if (ffmpegDir) pArgs.push('--ffmpeg-location', ffmpegDir);
   pArgs.push(
     '-o', path.join(job.dir, '%(title).100s.%(ext)s'), ...formatArgs,
@@ -1392,6 +1427,16 @@ app.post('/api/jobs', (req, res) => {
   const jobDir = path.join(TMP, jobId);
   fs.mkdirSync(jobDir, { recursive: true });
 
+  const userCookies = req.headers['x-yt-cookies'] || req.body?.cookies || '';
+  let userCookiePath = null;
+  if (userCookies && typeof userCookies === 'string' && userCookies.trim().length > 10) {
+    const filePath = path.join(jobDir, 'cookies.txt');
+    try {
+      fs.writeFileSync(filePath, cookieStringToNetscape(userCookies.trim()), 'utf8');
+      userCookiePath = filePath;
+    } catch (_) {}
+  }
+
   const canStartImmediately = (clientCounts.active < MAX_ACTIVE_PER_CLIENT) &&
                               (countRunningJobs() < MAX_GLOBAL_JOBS) &&
                               (downloadQueue.length === 0);
@@ -1409,6 +1454,7 @@ app.post('/api/jobs', (req, res) => {
     kind,
     quality: String(q),
     args,
+    cookieFile: userCookiePath,
     queuePosition: 0,
   };
 
@@ -1575,6 +1621,34 @@ setInterval(() => {
   }
 }, 5 * 60e3);
 
+app.post('/api/sync-browser-cookies', async (req, res) => {
+  const browser = String(req.body?.browser || 'chrome').toLowerCase();
+  const local = path.join(__dirname, 'cookies.txt');
+  await ensureBinaries();
+  const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
+  try {
+    const p = spawn(ytdlpBin, ['--cookies-from-browser', browser, '--cookies', local, '--skip-download', 'https://www.youtube.com']);
+    let err = '';
+    p.stderr.on('data', d => err += d.toString());
+    p.on('close', code => {
+      if (code === 0 && fs.existsSync(local) && fs.statSync(local).size > 100) {
+        innertubePromise = null;
+        return res.json({ success: true, message: `Successfully extracted cookies from ${browser}!` });
+      }
+      const msg = err.split('\n').filter(Boolean).pop() || `Failed to extract cookies from ${browser}`;
+      return res.status(400).json({ success: false, error: msg });
+    });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
+
+app.get('/api/cookies/status', (req, res) => {
+  const cookiePath = getCookiesPath();
+  const hasServerCookies = Boolean(cookiePath && fs.existsSync(cookiePath) && fs.statSync(cookiePath).size > 100);
+  res.json({ hasServerCookies });
+});
+
 app.use((err, _req, res, _next) => {
   console.error('[Server Error]', err);
   if (!res.headersSent) {
@@ -1582,4 +1656,7 @@ app.use((err, _req, res, _next) => {
   }
 });
 
-app.listen(PORT, () => console.log(`TubeGrab running → http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`TubeGrab running → http://localhost:${PORT}`);
+  fetchRealHomeFeed().catch(() => {});
+});
