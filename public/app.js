@@ -323,6 +323,8 @@ function openPlayer(id, title, duration = 0) {
   if (pDl) pDl.onclick = () => openDownload(id, title);
   $('#playerModal').hidden = false;
   document.body.classList.add('player-open');
+  const pQ = $('#pQ');
+  if (pQ) pQ.value = $('#q')?.value || '';
   renderRelatedVideos();
 
   const iframe = $('#playerIframe');
@@ -686,16 +688,32 @@ async function startJob(id, title, kind, q) {
   }
 }
 
-// ---------- boot & server connection ----------
-$('#searchForm').addEventListener('submit', e => {
-  e.preventDefault(); const v = $('#q').value.trim(); const id = extractId(v);
+const handleSearchSubmit = (inputEl) => {
+  const v = (inputEl?.value || '').trim();
+  const id = extractId(v);
+  const mainQ = $('#q');
+  if (mainQ) mainQ.value = v;
+  const pQ = $('#pQ');
+  if (pQ) pQ.value = v;
   if (id) {
     playerQueue = [];
     queueIndex = 0;
     renderRelatedVideos();
     openPlayer(id, '');
+  } else {
+    closeModal($('#playerModal'));
+    loadResults(true);
   }
-  else loadResults(true);
+};
+
+$('#searchForm').addEventListener('submit', e => {
+  e.preventDefault();
+  handleSearchSubmit($('#q'));
+});
+
+$('#pSearchForm')?.addEventListener('submit', e => {
+  e.preventDefault();
+  handleSearchSubmit($('#pQ'));
 });
 const dl = new URLSearchParams(location.search).get('dl');
 

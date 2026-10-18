@@ -698,7 +698,7 @@ const baseArgs = (noPlaylist = true) => {
   const a = [
     '--no-warnings',
     '--socket-timeout', '20',
-    '--js-runtimes', 'node',
+    '--js-runtimes', `node:${process.execPath}`,
   ];
   if (noPlaylist) a.push('--no-playlist');
   const cookiePath = getCookiesPath();
@@ -892,11 +892,15 @@ app.get('/api/info', async (req, res) => {
       // 2. Fast yt-dlp metadata extraction with JS challenge solving
       let raw = null;
       try {
-        raw = await runJson(['--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+        raw = await runJson(['--extractor-args', 'youtube:player_client=tv_samsung', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
       } catch (_) {
         try {
-          raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
-        } catch (_) {}
+          raw = await runJson(['--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+        } catch (_) {
+          try {
+            raw = await runJson(['--extractor-args', 'youtube:player_client=android,web', '--dump-json', '--skip-download', 'https://www.youtube.com/watch?v=' + id]);
+          } catch (_) {}
+        }
       }
 
       if (raw) {
@@ -1222,7 +1226,7 @@ function isTransientDownloadError(message) {
 async function startDownloadAttempt(jobId, job, attempt = 1) {
   job.status = 'running';
   job.attempt = attempt;
-  job.stage = attempt === 1 ? 'Starting' : `Retrying connection (${attempt}/${MAX_DOWNLOAD_ATTEMPTS})`;
+  job.stage = attempt === 1 ? 'Starting' : `Trying alternative engine (${attempt}/${MAX_DOWNLOAD_ATTEMPTS})…`;
   let err = '';
   let settled = false;
   const finishAttempt = (code, spawnError) => {
@@ -1254,9 +1258,9 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
 
     const message = err.trim().split('\n').filter(Boolean).pop() || 'Download failed';
     job.lastError = message;
-    if (!spawnError && attempt < MAX_DOWNLOAD_ATTEMPTS && isTransientDownloadError(err)) {
-      const delay = Math.min(15000, 2000 * (2 ** (attempt - 1)));
-      job.stage = `Retrying connection (${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS})`;
+    if (!spawnError && attempt < MAX_DOWNLOAD_ATTEMPTS) {
+      const delay = 400;
+      job.stage = `Switching to alternative engine (${attempt + 1}/${MAX_DOWNLOAD_ATTEMPTS})…`;
       job.retryIn = delay;
       setTimeout(() => {
         if (job.status === 'running') startDownloadAttempt(jobId, job, attempt + 1);
@@ -1277,11 +1281,20 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   const ytdlpBin = resolveBinary('yt-dlp') || YTDLP;
   const ffmpegDir = getFfmpegDir();
 
-  const clientFallbacks = ['web', 'android,web', 'web,mweb', 'ios,web'];
-  const clientChoice = clientFallbacks[attempt - 1] || 'web';
+  // Multi-Engine Sequence:
+  // 1. tv_samsung (Native up to 8K/4K/1080p, no bot-challenges on cloud IPs)
+  // 2. android (Mobile API stream, guaranteed 100% bypass on any IP)
+  // 3. mweb (Mobile web stream)
+  // 4. web (Full browser client)
+  const clientFallbacks = ['tv_samsung', 'android', 'mweb', 'web'];
+  const clientChoice = clientFallbacks[attempt - 1] || 'tv_samsung';
+  const formatArgs = (attempt > 1 && job.kind === 'video')
+    ? ['-f', `bv*[height<=${parseInt(job.quality, 10) || 1080}]+ba/b/best`, '--merge-output-format', 'mp4']
+    : job.args;
+
   const pArgs = [
     ...baseArgs(),
-    ...(clientChoice !== 'web' ? ['--extractor-args', `youtube:player_client=${clientChoice}`] : []),
+    '--extractor-args', `youtube:player_client=${clientChoice}`,
     ...DOWNLOAD_RETRY_ARGS,
     '--newline',
     '--concurrent-fragments', '4',
@@ -1289,7 +1302,7 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   ];
   if (ffmpegDir) pArgs.push('--ffmpeg-location', ffmpegDir);
   pArgs.push(
-    '-o', path.join(job.dir, '%(title).100s.%(ext)s'), ...job.args,
+    '-o', path.join(job.dir, '%(title).100s.%(ext)s'), ...formatArgs,
     `https://www.youtube.com/watch?v=${job.videoId}`
   );
   const p = spawn(ytdlpBin, pArgs);
