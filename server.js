@@ -953,47 +953,51 @@ app.get('/api/info', async (req, res) => {
   try {
     const cookieHash = userCookies ? ':' + crypto.createHash('md5').update(userCookies).digest('hex').slice(0, 8) : '';
     const info = await cached('i:' + id + cookieHash, 10 * 60e3, async () => {
-      // 1. Fast direct extraction from YouTube watch page
+      // Helper: race a promise against a timeout (datacenter IPs hang on YouTube)
+      const withTimeout = (promise, ms) => Promise.race([
+        promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
+      ]);
+
+      // 1. Fast direct extraction from YouTube watch page (3s timeout — fails on cloud IPs)
       try {
-        const fast = await getFastVideoInfo(id, userCookies);
+        const fast = await withTimeout(getFastVideoInfo(id, userCookies), 3000);
         if (fast && fast.video && fast.video.length > 0) {
           return fast;
         }
       } catch (_) {}
 
-      // 2. High-speed, highly reliable in-memory Innertube extraction
+      // 2. In-memory Innertube extraction (4s timeout — often 403 on datacenter IPs)
       try {
-        const inner = await getInnertubeInfo(id);
+        const inner = await withTimeout(getInnertubeInfo(id), 4000);
         if (inner && inner.video && inner.video.length > 0) {
           return inner;
         }
       } catch (_) {}
 
-      // 3. yt-dlp metadata extraction
+      // 3. yt-dlp metadata — tv_samsung FIRST (bypasses datacenter IP blocks)
       let userCookiePath = null;
       if (userCookies) {
         userCookiePath = createUserCookieFile(userCookies);
       }
-      const ytdlpArgs = ['--extractor-args', 'youtube:player_client=android,web,tv_samsung', '--dump-json', '--skip-download'];
-      if (userCookiePath) {
-        ytdlpArgs.push('--cookies', userCookiePath);
-      }
-      ytdlpArgs.push('https://www.youtube.com/watch?v=' + id);
 
       let raw = null;
-      try {
-        raw = await runJson(ytdlpArgs);
-      } catch (_) {
+      const ytdlpClientSequence = [
+        'tv_samsung,web_embedded',
+        'android,web,tv_samsung',
+      ];
+      for (const clients of ytdlpClientSequence) {
+        if (raw) break;
+        const args = ['--extractor-args', `youtube:player_client=${clients}`, '--dump-json', '--skip-download'];
+        if (userCookiePath) args.push('--cookies', userCookiePath);
+        args.push('https://www.youtube.com/watch?v=' + id);
         try {
-          const fallbackArgs = ['--extractor-args', 'youtube:player_client=tv_samsung,web_embedded', '--dump-json', '--skip-download'];
-          if (userCookiePath) fallbackArgs.push('--cookies', userCookiePath);
-          fallbackArgs.push('https://www.youtube.com/watch?v=' + id);
-          raw = await runJson(fallbackArgs);
+          raw = await runJson(args);
         } catch (_) {}
-      } finally {
-        if (userCookiePath) {
-          try { fs.unlinkSync(userCookiePath); } catch (_) {}
-        }
+      }
+
+      if (userCookiePath) {
+        try { fs.unlinkSync(userCookiePath); } catch (_) {}
       }
 
       const dur = raw?.duration || 0;
@@ -1298,8 +1302,12 @@ async function downloadViaInnertube(jobId, job) {
     const streamFormat = isAudio ? 'ba/b/best' : `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/18/b/best`;
     let streamUrls = [];
     try {
-      streamUrls = await runLines(['--extractor-args', 'youtube:player_client=android,web', '-f', streamFormat, '-g', `https://www.youtube.com/watch?v=${job.videoId}`]);
-    } catch (_) {}
+      streamUrls = await runLines(['--extractor-args', 'youtube:player_client=tv_samsung,web_embedded', '-f', streamFormat, '-g', `https://www.youtube.com/watch?v=${job.videoId}`]);
+    } catch (_) {
+      try {
+        streamUrls = await runLines(['--extractor-args', 'youtube:player_client=android,web', '-f', streamFormat, '-g', `https://www.youtube.com/watch?v=${job.videoId}`]);
+      } catch (_) {}
+    }
 
     if (!streamUrls || !streamUrls.length) {
       throw new Error(job.lastError || 'Could not retrieve direct media stream');
@@ -1407,10 +1415,10 @@ async function startDownloadAttempt(jobId, job, attempt = 1) {
   // 4. ios,mweb (Apple mobile & mobile web APIs)
   // 5. web_safari,web (Safari browser client)
   const clientFallbacks = [
-    'android,web',
     'tv_samsung,web',
-    'ios,mweb',
     'tv_samsung,web_embedded',
+    'android,web',
+    'ios,mweb',
     'web'
   ];
   const clientChoice = clientFallbacks[attempt - 1] || 'tv_samsung,visionos,web';

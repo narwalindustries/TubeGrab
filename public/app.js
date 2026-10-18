@@ -671,18 +671,19 @@ function openDownload(id, title) {
     })
     .catch(err => {
       if ($('#dlModal').hidden) return;
-      const dBody = $('#dBody');
-      dBody.innerHTML = `
-        <div style="padding:28px 16px;text-align:center;">
-          <p style="color:#f87171;font-size:14px;margin-bottom:14px;line-height:1.4;">Could not detect video qualities: ${esc(err.message || 'Please try again')}</p>
-          <button class="opt" style="margin:0 auto;display:inline-flex;padding:10px 22px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.16);border-radius:10px;cursor:pointer;color:#fff;" id="retryDlInfoBtn">
-            <span>🔄 Retry Quality Detection</span>
-          </button>
-        </div>`;
-      $('#retryDlInfoBtn')?.addEventListener('click', () => {
-        videoInfoCache.delete(id);
-        openDownload(id, resolvedTitle);
-      });
+      // Fallback: provide standard resolutions so user is never blocked from downloading
+      const fallbackVideos = [
+        { height: 1080, label: '1080p (HD)', size: null },
+        { height: 720, label: '720p', size: null },
+        { height: 480, label: '480p', size: null },
+        { height: 360, label: '360p', size: null },
+      ];
+      renderFormats(fallbackVideos, defaultAudio, resolvedTitle);
+      const note = document.createElement('div');
+      note.style.cssText = 'padding:8px 12px;margin:0 0 10px;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.25);border-radius:8px;font-size:12px;color:#facc15;text-align:center;';
+      note.textContent = 'Quality detection delayed: showing standard resolutions. You can still download!';
+      const body = $('#dBody');
+      if (body) body.prepend(note);
     });
 }
 
